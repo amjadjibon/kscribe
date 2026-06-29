@@ -6,7 +6,7 @@ started: 2026-06-29
 max_iterations: 3
 max_phases: 8
 max_agents: 3
-current_iteration: 1
+current_iteration: 2
 status: running
 last_review_base: '38afa46'
 ---
@@ -17,7 +17,7 @@ last_review_base: '38afa46'
 
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
-| 1    | pending | —    | —    | —   | —   | sequential | implemented |
+| 1    | Request Changes | 0 | 2 | 3 | 3 | sequential | fix HIGH+MED (single agent) |
 
 ## Stacked PRs
 
@@ -42,5 +42,10 @@ last_review_base: '38afa46'
 ### Iteration 1
 - [x] implement-plan (sequential, 8 phases)
 - [x] qa (coverage 30.9%->32.4%, +integration test, no bugs)
+- [x] code-review (Request Changes: 0C/2H/3M/3L)
+- [x] decide -> fix HIGH-001,HIGH-002,MED-001,MED-002,MED-003,LOW-001,LOW-003 (LOW-002 deferred: MVP)
+
+### Iteration 2
+- [ ] fix only — no re-implement
 - [ ] code-review
 - [ ] decide
