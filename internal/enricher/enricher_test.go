@@ -200,6 +200,118 @@ func TestEncodeSnapshot_RedactsBeforeSerialize(t *testing.T) {
 	}
 }
 
+// TestDecodeSnapshot_RoundTrip verifies that DecodeSnapshot is the inverse of
+// EncodeSnapshot for non-sensitive fields (post-redaction values survive the
+// encode/decode cycle intact).
+func TestDecodeSnapshot_RoundTrip(t *testing.T) {
+	original := &enricher.Snapshot{
+		EventUID:   "uid-rt",
+		Reason:     "BackOff",
+		Message:    "container failed to start", // no secrets — survives redaction
+		Namespace:  "default",
+		ObjectKind: "Pod",
+		ObjectName: "app-pod",
+		Partial:    []string{"node-fetch-failed"},
+		NodeConditions: []enricher.NodeCondition{
+			{NodeName: "node-1", Type: "Ready", Status: "False", Message: "kubelet not ready"},
+		},
+	}
+
+	encoded, err := enricher.EncodeSnapshot(original)
+	if err != nil {
+		t.Fatalf("EncodeSnapshot: %v", err)
+	}
+	decoded, err := enricher.DecodeSnapshot(encoded)
+	if err != nil {
+		t.Fatalf("DecodeSnapshot: %v", err)
+	}
+
+	if decoded.EventUID != original.EventUID {
+		t.Errorf("EventUID = %q, want %q", decoded.EventUID, original.EventUID)
+	}
+	if decoded.Reason != original.Reason {
+		t.Errorf("Reason = %q, want %q", decoded.Reason, original.Reason)
+	}
+	if decoded.Namespace != original.Namespace {
+		t.Errorf("Namespace = %q, want %q", decoded.Namespace, original.Namespace)
+	}
+	if len(decoded.Partial) != 1 || decoded.Partial[0] != "node-fetch-failed" {
+		t.Errorf("Partial = %v, want [node-fetch-failed]", decoded.Partial)
+	}
+	if len(decoded.NodeConditions) != 1 || decoded.NodeConditions[0].NodeName != "node-1" {
+		t.Errorf("NodeConditions = %v", decoded.NodeConditions)
+	}
+}
+
+// TestDecodeSnapshot_InvalidJSON verifies DecodeSnapshot returns an error on garbage input.
+func TestDecodeSnapshot_InvalidJSON(t *testing.T) {
+	_, err := enricher.DecodeSnapshot([]byte("not-json"))
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// TestRedact_AdditionalSecretPatterns covers secret types not in the original sample set:
+// kubeconfig service-account token, GCP service-account PEM key embedded in JSON.
+// These confirm the existing rules handle them — no new rules needed.
+func TestRedact_AdditionalSecretPatterns(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		secret string
+	}{
+		{
+			"kubeconfig token field",
+			"token: eyJhbGciOiJSUzI1NiIsImtpZCI6ImFiYyJ9.eyJzdWIiOiJzeXN0ZW0ifQ.sig",
+			"eyJhbGciOiJSUzI1NiIsImtpZCI6ImFiYyJ9",
+		},
+		{
+			"GCP service-account PEM key in JSON value",
+			`"private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAverylongkeydata\n-----END RSA PRIVATE KEY-----\n"`,
+			"MIIEpAIBAAKCAQEAverylongkeydata",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := enricher.Redact(tc.input)
+			if strings.Contains(got, tc.secret) {
+				t.Errorf("secret %q still present after redaction: %q", tc.secret, got)
+			}
+			if !strings.Contains(got, enricher.RedactedPlaceholder) {
+				t.Errorf("placeholder not found in redacted output: %q", got)
+			}
+		})
+	}
+}
+
+// TestRedactSnapshot_DeploymentAndReplicaSetConditions verifies that
+// DeploymentStatus and ReplicaSetStatus condition strings are redacted when
+// they contain sensitive values (covers previously-uncovered branches in
+// RedactSnapshot).
+func TestRedactSnapshot_DeploymentAndReplicaSetConditions(t *testing.T) {
+	s := &enricher.Snapshot{
+		DeploymentStatus: &enricher.DeploymentStatus{
+			Name:       "app",
+			Conditions: []string{"reason: token=supersecrettoken123"},
+		},
+		ReplicaSetStatus: &enricher.ReplicaSetStatus{
+			Name:       "app-rs",
+			Conditions: []string{"message: password=hunter2"},
+		},
+	}
+	enricher.RedactSnapshot(s)
+	for _, cond := range s.DeploymentStatus.Conditions {
+		if strings.Contains(cond, "supersecrettoken123") {
+			t.Errorf("DeploymentStatus condition still contains secret: %q", cond)
+		}
+	}
+	for _, cond := range s.ReplicaSetStatus.Conditions {
+		if strings.Contains(cond, "hunter2") {
+			t.Errorf("ReplicaSetStatus condition still contains secret: %q", cond)
+		}
+	}
+}
+
 // TestNoEncodingJSON asserts that no non-test enricher source file imports
 // "encoding/json" (CON-003: sonic only).
 func TestNoEncodingJSON(t *testing.T) {
