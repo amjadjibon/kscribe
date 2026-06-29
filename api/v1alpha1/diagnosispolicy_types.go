@@ -76,7 +76,3 @@ type DiagnosisPolicyList struct {
 
 	Items []DiagnosisPolicy `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&DiagnosisPolicy{}, &DiagnosisPolicyList{})
-}

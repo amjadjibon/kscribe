@@ -162,7 +162,3 @@ type KscribeDiagnosisList struct {
 
 	Items []KscribeDiagnosis `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&KscribeDiagnosis{}, &KscribeDiagnosisList{})
-}
