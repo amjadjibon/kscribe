@@ -1,0 +1,14 @@
+apiVersion: v2
+name: kscribe
+description: Kubernetes operator that watches Warning events and produces LLM-assisted root-cause diagnoses
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/amjadjibon/kscribe
+sources:
+  - https://github.com/amjadjibon/kscribe
+keywords:
+  - operator
+  - diagnostics
+  - llm
+  - sre

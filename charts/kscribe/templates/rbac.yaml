@@ -1,0 +1,42 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kscribe.fullname" . }}
+  labels:
+    {{- include "kscribe.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: [events, nodes, pods]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [pods/log]
+  verbs: [get]
+- apiGroups: [apps]
+  resources: [deployments, replicasets]
+  verbs: [get, list, watch]
+- apiGroups: [kscribe.amjadjibon.dev]
+  resources: [diagnosispolicies]
+  verbs: [get, list, watch]
+- apiGroups: [kscribe.amjadjibon.dev]
+  resources: [kscribediagnoses]
+  verbs: [create, delete, get, list, patch, update, watch]
+- apiGroups: [kscribe.amjadjibon.dev]
+  resources: [kscribediagnoses/status]
+  verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kscribe.fullname" . }}
+  labels:
+    {{- include "kscribe.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kscribe.fullname" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "kscribe.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

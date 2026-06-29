@@ -1,0 +1,17 @@
+{{- if .Values.defaultPolicy.enabled -}}
+apiVersion: kscribe.amjadjibon.dev/v1alpha1
+kind: DiagnosisPolicy
+metadata:
+  name: default
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kscribe.labels" . | nindent 4 }}
+spec:
+  enabled: true
+  eventReasons:
+    {{- toYaml .Values.defaultPolicy.eventReasons | nindent 4 }}
+  llmProvider: {{ .Values.llm.provider | quote }}
+  llmModel: {{ .Values.llm.model | quote }}
+  maxIterations: {{ .Values.defaultPolicy.maxIterations }}
+  redact: {{ .Values.defaultPolicy.redact }}
+{{- end }}
