@@ -1,0 +1,8 @@
+.git
+bin/
+*.db
+*.db-shm
+*.db-wal
+docs/
+deploy/
+.github/
