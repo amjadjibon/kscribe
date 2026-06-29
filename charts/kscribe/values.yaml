@@ -1,0 +1,77 @@
+replicaCount: 1 # CON-006: single replica — Deduper and SQLite are per-process.
+
+image:
+  repository: ghcr.io/amjadjibon/kscribe
+  pullPolicy: IfNotPresent
+  # tag defaults to .Chart.AppVersion when empty.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  # Creates the cluster-scoped Role + binding the operator needs to watch
+  # events/pods/nodes and own its CRDs.
+  create: true
+
+service:
+  type: ClusterIP
+  port: 8080
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  # Use an existing PVC instead of creating one.
+  existingClaim: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+podSecurityContext:
+  fsGroup: 65532 # lets the non-root user write the PVC at /data
+
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+  # readOnlyRootFilesystem omitted: the operator writes to /tmp (Go runtime, templ).
+
+leaderElect: false
+redactEnabled: true # SEC-001: redaction is always enforced; this is audit metadata.
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  # Provide the API key inline (a Secret is created) OR point at an existing Secret.
+  apiKey: ""
+  existingSecret: ""
+  existingSecretKey: api-key
+
+# Default DiagnosisPolicy installed in the release namespace.
+defaultPolicy:
+  enabled: true
+  eventReasons:
+    - BackOff
+    - OOMKilling
+    - Failed
+    - FailedScheduling
+  maxIterations: 5
+  redact: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

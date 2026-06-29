@@ -1,0 +1,20 @@
+kscribe is installed in namespace "{{ .Release.Namespace }}".
+
+1. Set your LLM API key (the operator boots without it but can't diagnose until set):
+
+   kubectl -n {{ .Release.Namespace }} create secret generic {{ include "kscribe.llmSecretName" . }} \
+     --from-literal=api-key=<your-key> --dry-run=client -o yaml | kubectl apply -f -
+
+   or reinstall with --set llm.apiKey=<your-key>.
+
+2. Watch the operator come up:
+
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "kscribe.fullname" . }}
+
+3. Open the dashboard:
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kscribe.fullname" . }}-dashboard {{ .Values.service.port }}:{{ .Values.service.port }}
+   # then visit http://127.0.0.1:{{ .Values.service.port }}
+
+Note: enriched (redacted) cluster context is sent to the configured LLM provider
+({{ .Values.llm.provider }}/{{ .Values.llm.model }}). Redaction is always enforced.

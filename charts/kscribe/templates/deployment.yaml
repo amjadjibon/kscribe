@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kscribe.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kscribe.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kscribe.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kscribe.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kscribe.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: manager
+        image: {{ include "kscribe.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+        - name: KSCRIBE_DB_PATH
+          value: /data/kscribe.db
+        - name: KSCRIBE_ADDR
+          value: ":{{ .Values.service.port }}"
+        - name: KSCRIBE_OPERATOR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: KSCRIBE_LLM_PROVIDER
+          value: {{ .Values.llm.provider | quote }}
+        - name: KSCRIBE_LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
+        - name: KSCRIBE_LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "kscribe.llmSecretName" . }}
+              key: {{ include "kscribe.llmSecretKey" . }}
+              optional: true
+        - name: KSCRIBE_LEADER_ELECT
+          value: {{ .Values.leaderElect | quote }}
+        - name: KSCRIBE_REDACT_ENABLED
+          value: {{ .Values.redactEnabled | quote }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.service.port }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        {{- if .Values.persistence.enabled }}
+        volumeMounts:
+        - name: db
+          mountPath: /data
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+      - name: db
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.existingClaim | default (printf "%s-db" (include "kscribe.fullname" .)) }}
+      {{- end }}
