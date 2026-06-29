@@ -1,0 +1,130 @@
+package templates
+
+import (
+	"fmt"
+	"github.com/amjadjibon/kscribe/internal/store"
+)
+
+// PhaseBadge renders a coloured phase label.
+templ PhaseBadge(phase string) {
+	<span class={ "badge", phaseBadgeClass(phase) }>{ phase }</span>
+}
+
+// IncidentList renders the dashboard list page.
+templ IncidentList(incidents []store.Incident) {
+	<h2>Incidents</h2>
+	if len(incidents) == 0 {
+		<p>No incidents yet.</p>
+	} else {
+		<table>
+			<thead>
+				<tr>
+					<th>Namespace / Name</th>
+					<th>Object</th>
+					<th>Reason</th>
+					<th>Phase</th>
+					<th>Updated</th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, inc := range incidents {
+					<tr>
+						<td>
+							<a href={ templ.SafeURL("/incidents/" + inc.Namespace + "/" + inc.Name) }>
+								{ inc.Namespace }/{ inc.Name }
+							</a>
+						</td>
+						<td>{ inc.InvolvedObjectKind }/{ inc.InvolvedObjectName }</td>
+						<td>{ inc.Reason }</td>
+						<td>@PhaseBadge(inc.Phase)</td>
+						<td>{ inc.UpdatedAt.Format("2006-01-02 15:04:05") }</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	}
+}
+
+// IncidentDetail renders the full incident detail page including diagnoses and SSE hook.
+templ IncidentDetail(d *store.IncidentDetail) {
+	<h2>
+		{ d.Namespace }/{ d.Name }
+		@PhaseBadge(d.Phase)
+	</h2>
+	<section>
+		<h3>Event</h3>
+		<dl>
+			<dt>Object</dt><dd>{ d.InvolvedObjectKind }/{ d.InvolvedObjectName } ({ d.InvolvedObjectNamespace })</dd>
+			<dt>Reason</dt><dd>{ d.Reason }</dd>
+			<dt>Message</dt><dd>{ d.Message }</dd>
+			if d.StartedAt != nil {
+				<dt>Started</dt><dd>{ d.StartedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+			}
+			if d.CompletedAt != nil {
+				<dt>Completed</dt><dd>{ d.CompletedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+			}
+			<dt>LLM</dt><dd>{ d.LLMProvider }/{ d.LLMModel } ({ fmt.Sprintf("%d tokens", d.TokensUsed) })</dd>
+		</dl>
+	</section>
+	<section>
+		<h3>
+			Live Status
+			<small style="font-weight:normal;font-size:.7em;color:#888;">(SSE)</small>
+		</h3>
+		<div
+			hx-ext="sse"
+			sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/stream" }
+			sse-swap="message"
+			hx-swap="innerHTML"
+			id="live-status"
+		>
+			@PhaseBadge(d.Phase)
+		</div>
+	</section>
+	if len(d.Diagnoses) > 0 {
+		<section>
+			<h3>RCA / Remediation</h3>
+			for _, diag := range d.Diagnoses {
+				@DiagnosisBlock(diag)
+			}
+		</section>
+	}
+}
+
+// DiagnosisBlock renders a single diagnosis record.
+templ DiagnosisBlock(diag store.Diagnosis) {
+	<article>
+		<header>
+			<strong>Diagnosis #{ fmt.Sprintf("%d", diag.ID) }</strong>
+			<small style="float:right">{ diag.CreatedAt.Format("2006-01-02 15:04:05") }</small>
+		</header>
+		<dl>
+			if diag.Summary != "" {
+				<dt>Summary</dt><dd>{ diag.Summary }</dd>
+			}
+			if diag.RootCause != "" {
+				<dt>Root Cause</dt><dd>{ diag.RootCause }</dd>
+			}
+			if diag.Remediation != "" {
+				<dt>Remediation</dt><dd>{ diag.Remediation }</dd>
+			}
+			<dt>Confidence</dt><dd>{ fmt.Sprintf("%.0f%%", diag.Confidence*100) }</dd>
+		</dl>
+	</article>
+}
+
+// phaseBadgeClass maps a phase string to its CSS class.
+func phaseBadgeClass(phase string) string {
+	switch phase {
+	case "Done":
+		return "badge-done"
+	case "Partial":
+		return "badge-partial"
+	case "Failed":
+		return "badge-failed"
+	case "Diagnosing":
+		return "badge-diagnosing"
+	default:
+		return "badge-pending"
+	}
+}
