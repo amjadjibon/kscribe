@@ -23,14 +23,14 @@ last_review_base: ''
 
 | Phase   | Branch              | PR URL | Base                | Status  |
 |---------|---------------------|--------|---------------------|---------|
-| phase-1 | kscribe-mvp/phase-1 | —      | main                | pending |
-| phase-2 | kscribe-mvp/phase-2 | —      | kscribe-mvp/phase-1 | pending |
-| phase-3 | kscribe-mvp/phase-3 | —      | kscribe-mvp/phase-2 | pending |
-| phase-4 | kscribe-mvp/phase-4 | —      | kscribe-mvp/phase-3 | pending |
-| phase-5 | kscribe-mvp/phase-5 | —      | kscribe-mvp/phase-4 | pending |
-| phase-6 | kscribe-mvp/phase-6 | —      | kscribe-mvp/phase-5 | pending |
-| phase-7 | kscribe-mvp/phase-7 | —      | kscribe-mvp/phase-6 | pending |
-| phase-8 | kscribe-mvp/phase-8 | —      | kscribe-mvp/phase-7 | pending |
+| phase-1 | kscribe-mvp-phase-1 | —      | main                | pending |
+| phase-2 | kscribe-mvp-phase-2 | —      | kscribe-mvp-phase-1 | pending |
+| phase-3 | kscribe-mvp-phase-3 | —      | kscribe-mvp-phase-2 | pending |
+| phase-4 | kscribe-mvp-phase-4 | —      | kscribe-mvp-phase-3 | pending |
+| phase-5 | kscribe-mvp-phase-5 | —      | kscribe-mvp-phase-4 | pending |
+| phase-6 | kscribe-mvp-phase-6 | —      | kscribe-mvp-phase-5 | pending |
+| phase-7 | kscribe-mvp-phase-7 | —      | kscribe-mvp-phase-6 | pending |
+| phase-8 | kscribe-mvp-phase-8 | —      | kscribe-mvp-phase-7 | pending |
 
 ## Active Worktrees
 
