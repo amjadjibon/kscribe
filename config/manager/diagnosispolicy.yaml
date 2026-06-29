@@ -1,0 +1,19 @@
+---
+# Default DiagnosisPolicy for the operator namespace.
+# Override per-namespace by creating a DiagnosisPolicy in the target namespace.
+apiVersion: kscribe.amjadjibon.dev/v1alpha1
+kind: DiagnosisPolicy
+metadata:
+  name: default
+  namespace: kscribe-system
+spec:
+  enabled: true
+  eventReasons:
+  - BackOff
+  - OOMKilling
+  - Failed
+  - FailedScheduling
+  llmProvider: openai
+  llmModel: gpt-4o-mini
+  maxIterations: 5
+  redact: true

@@ -1,0 +1,13 @@
+---
+# PVC for the SQLite state database (CON-006: single replica, single PVC).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kscribe-db
+  namespace: kscribe-system
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

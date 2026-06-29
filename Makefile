@@ -6,7 +6,7 @@ MODULE     := github.com/amjadjibon/kscribe
 CONTROLLER_GEN := go run -tags tools sigs.k8s.io/controller-tools/cmd/controller-gen
 TEMPL          := go run -tags tools github.com/a-h/templ/cmd/templ
 
-.PHONY: build test generate manifests templ vet
+.PHONY: build test generate manifests templ vet manifest-check
 
 build:
 	go build -o bin/$(BINARY) $(CMD)
@@ -27,3 +27,8 @@ manifests:
 
 templ:
 	$(TEMPL) generate
+
+# Verify deploy/kscribe.yaml is reproducible: rebuild it and assert no diff (TASK-038).
+manifest-check:
+	bash scripts/build-manifest.sh
+	git diff --exit-code deploy/kscribe.yaml
