@@ -1,5 +1,5 @@
 // Package controller implements kscribe operator controllers.
-// RBAC markers here drive config/rbac/role.yaml generation.
+// RBAC markers here drive charts/kscribe/templates/role.yaml generation (make manifests).
 //
 // +kubebuilder:rbac:groups=kscribe.amjadjibon.dev,resources=kscribediagnoses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kscribe.amjadjibon.dev,resources=kscribediagnoses/status,verbs=get;update;patch

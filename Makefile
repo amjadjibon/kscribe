@@ -21,9 +21,10 @@ vet:
 generate:
 	$(CONTROLLER_GEN) object:headerFile="" paths="./..."
 
-# Generate CRD manifests and RBAC. Scans ./... so it's a clean no-op in phase 1.
+# Generate CRD manifests and RBAC directly into the Helm chart — the single
+# source of truth. deploy/kscribe.yaml is rendered from the chart (see manifest-check).
 manifests:
-	$(CONTROLLER_GEN) crd rbac:roleName=kscribe-role paths="./..." output:crd:dir=config/crd/bases output:rbac:dir=config/rbac
+	$(CONTROLLER_GEN) crd rbac:roleName=kscribe-role paths="./..." output:crd:dir=charts/kscribe/crds output:rbac:dir=charts/kscribe/templates
 
 templ:
 	$(TEMPL) generate
