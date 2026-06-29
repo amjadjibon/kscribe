@@ -23,7 +23,7 @@ generate:
 
 # Generate CRD manifests and RBAC. Scans ./... so it's a clean no-op in phase 1.
 manifests:
-	$(CONTROLLER_GEN) crd rbac:roleName=kscribe-role paths="./..." output:crd:dir=config/crd/bases
+	$(CONTROLLER_GEN) crd rbac:roleName=kscribe-role paths="./..." output:crd:dir=config/crd/bases output:rbac:dir=config/rbac
 
 templ:
 	$(TEMPL) generate
