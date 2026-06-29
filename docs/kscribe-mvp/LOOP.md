@@ -8,7 +8,7 @@ max_phases: 8
 max_agents: 3
 current_iteration: 1
 status: running
-last_review_base: ''
+last_review_base: '38afa46'
 ---
 
 # Dev Loop: kscribe-mvp
@@ -41,6 +41,6 @@ last_review_base: ''
 
 ### Iteration 1
 - [x] implement-plan (sequential, 8 phases)
-- [ ] qa
+- [x] qa (coverage 30.9%->32.4%, +integration test, no bugs)
 - [ ] code-review
 - [ ] decide
