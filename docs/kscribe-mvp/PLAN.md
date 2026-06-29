@@ -1,6 +1,6 @@
 ---
 goal: kscribe Kubernetes Operator MVP
-version: 1.0
+version: 1.1
 date_created: 2026-06-29
 last_updated: 2026-06-29
 owner: amjadjibon
@@ -15,6 +15,91 @@ tags: [feature, architecture]
 This plan builds `kscribe` as a Kubernetes operator: a single Go controller-manager binary that installs CRDs, watches core Kubernetes `Warning` Events, creates `KscribeDiagnosis` custom resources, reconciles each diagnosis through enrichment and an LLM-assisted RCA loop, persists results in SQLite, and serves a templ + HTMX dashboard. The operator runs as a Kubernetes `Deployment`, while the CRDs and reconcilers define the operator behavior.
 
 The repo currently has no Go implementation files, so the plan starts from scaffold and proceeds through API types, reconciliation, agent logic, UI, and deployment.
+
+## 0. Architecture Diagrams
+
+### Runtime Architecture
+
+```mermaid
+flowchart LR
+    subgraph Cluster["Kubernetes cluster"]
+        Events["core v1.Event\nWarning events"]
+        Pods["Pods and pod logs"]
+        Nodes["Nodes"]
+        Deploys["Deployments and ReplicaSets"]
+        Policy["DiagnosisPolicy CRs"]
+        Diagnosis["KscribeDiagnosis CRs"]
+    end
+
+    subgraph Operator["kscribe Deployment\ncontroller manager + web server"]
+        Watcher["event watcher"]
+        Reconciler["KscribeDiagnosis reconciler"]
+        Enricher["context builder + redactor"]
+        Agent["LLM diagnosis agent"]
+        Store["SQLite store"]
+        Web["templ + HTMX dashboard\nSSE broker"]
+    end
+
+    LLM["OpenAI-compatible LLM provider"]
+    Browser["Browser"]
+
+    Events --> Watcher
+    Watcher --> Diagnosis
+    Policy --> Reconciler
+    Diagnosis --> Reconciler
+    Reconciler --> Enricher
+    Pods --> Enricher
+    Nodes --> Enricher
+    Deploys --> Enricher
+    Enricher --> Agent
+    Agent --> LLM
+    Agent --> Store
+    Agent --> Diagnosis
+    Store --> Web
+    Diagnosis --> Web
+    Web --> Browser
+```
+
+### Diagnosis Sequence
+
+```mermaid
+sequenceDiagram
+    participant K8s as Kubernetes API
+    participant EW as Event watcher
+    participant CR as KscribeDiagnosis CR
+    participant DR as Diagnosis reconciler
+    participant EN as Enricher and redactor
+    participant AG as LLM agent
+    participant DB as SQLite
+    participant UI as Dashboard SSE
+
+    K8s->>EW: core v1.Event type=Warning
+    EW->>EW: apply DiagnosisPolicy and dedup
+    EW->>CR: create KscribeDiagnosis phase=Pending
+    CR->>DR: reconcile request
+    DR->>CR: update phase=Diagnosing
+    DR->>EN: build Kubernetes context
+    EN->>EN: redact sensitive fields
+    EN->>AG: redacted payload
+    AG->>AG: tool-call loop with max iterations
+    AG->>DB: persist incident and diagnosis
+    AG->>CR: update phase=Done, Partial, or Failed
+    AG->>UI: publish status and RCA event
+```
+
+### Custom Resource Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: event accepted
+    Pending --> Diagnosing: reconciler starts work
+    Diagnosing --> Done: valid RCA persisted
+    Diagnosing --> Partial: max iterations or repair fallback
+    Diagnosing --> Failed: provider error or no useful RCA
+    Partial --> Diagnosing: retry on spec or policy change
+    Failed --> Diagnosing: retry on spec or policy change
+    Done --> [*]
+```
 
 ## 1. Requirements & Constraints
 
