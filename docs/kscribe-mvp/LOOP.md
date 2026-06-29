@@ -46,6 +46,6 @@ last_review_base: '38afa46'
 - [x] decide -> fix HIGH-001,HIGH-002,MED-001,MED-002,MED-003,LOW-001,LOW-003 (LOW-002 deferred: MVP)
 
 ### Iteration 2
-- [ ] fix only — no re-implement
+- [x] fix only — no re-implement (7 findings fixed, LOW-002 deferred) @5ae2d0e
 - [ ] code-review
 - [ ] decide
