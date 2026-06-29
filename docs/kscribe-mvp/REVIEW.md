@@ -1,138 +1,127 @@
 ---
-date: 2026-06-29
+date: 2026-06-30
 branch: kscribe-mvp-phase-8
 reviewer: Claude
-verdict: Request Changes
+verdict: Approve
+iteration: 2
 ---
 
-# Code Review: kscribe-mvp
+# Code Review: kscribe-mvp (Iteration 2 — fix verification)
 
 ## Verdict
 
-**Request Changes** — Core security invariants (SEC-001 redaction, CON-003 sonic-only, secret handling, SQL parameterization) all hold, but two controller correctness bugs in the diagnosis lifecycle (a dead requeue path and unhandled `AlreadyExists`) can permanently strand CRs or storm the reconcile queue.
+**Approve** — All iteration-1 High and Medium findings are fixed correctly and the fixes are
+covered by tests that exercise the real failure paths. No regressions, races, or nil-derefs were
+introduced. Three Low cleanups remain (a gofmt failure, a narrow duplicate-row edge in the new
+recovery path, and an unverifiable image-USER assumption for the new securityContext) — none block merge.
 
 ## Summary
 
-Reviewed the full `git diff main...HEAD` for the kscribe operator, concentrating on the stated invariants and on correctness/concurrency that unit tests would not catch. The security posture is solid: every `Snapshot` is serialized only through `EncodeSnapshot`, which redacts before marshaling; no `encoding/json` exists in application code; the LLM API key is sourced from a Secret and never logged; all SQL is parameterized; migrations fail closed. The substantive problems are in the reconcile control flow: the `Diagnosing` phase guard makes the ADR-003 retry a no-op, and the event-watcher create path treats `AlreadyExists` as a hard error. Both are routinely triggered (storage blips, operator restarts) and have trivial fixes.
+Re-reviewed `git diff 8ba9eb2 5ae2d0e` (243 insertions, 10 files) against the prior REVIEW.md.
+`go build ./...`, `go vet`, and `go test ./internal/controller/... ./internal/web/...` all pass.
+HIGH-001 (stranded `Diagnosing`), HIGH-002 (`AlreadyExists` storm), MED-001 (unbounded deduper),
+MED-002 (no SSE publisher), MED-003 (no securityContext), and the two Low items (LOW-001 comment,
+LOW-003 body truncation) are all resolved. LOW-002 remains a deliberate MVP deferral and is not
+re-flagged.
+
+## Fix Verification
+
+- **HIGH-001 — FIXED.** The new `case DiagnosisPhaseDiagnosing` (controller:69-73) returns early when
+  `Persisted`, else falls through to re-run. Primary scenario traced end-to-end: `Pending` →
+  `Diagnosing` → `InsertDiagnosis` fails (sets `Persisted=false`, requeue+err, lines 191-203) →
+  requeue re-enters with `Diagnosing && !Persisted` → re-runs → `InsertDiagnosis` succeeds → `Done`,
+  `Persisted=true`. No duplicate `diagnoses` row in this path because the first insert failed (no row
+  was written). `UpsertIncident` is `ON CONFLICT(namespace,name) DO UPDATE` (sqlite.go:110), so the
+  re-run does not create a duplicate incident. No infinite tight loop: the retry is the bounded 30s
+  `RequeueAfter` from ADR-003. Status writes are idempotent. Covered by
+  `TestReconcile_SQLiteFailureThenRecovery`, which asserts `Diagnosing/!Persisted` then `Done/Persisted`.
+  See LOW-001 below for the one narrow residual edge.
+- **HIGH-002 — FIXED.** `event_watcher.go:115` now returns nil on `apierrors.IsAlreadyExists(err)` and
+  still propagates every other error via `&& !apierrors.IsAlreadyExists(err)`. Correct. Covered by
+  `TestAlreadyExistsIsSuccess`.
+- **MED-001 — FIXED.** `dedup.go:36-43` sweeps expired entries when `len(d.seen) >= 1024`, inside the
+  already-held `d.mu` lock (single critical section, no race), using the injected `d.now()` seam.
+  Threshold logic is correct (sweep-then-insert). Covered by `TestDeduper_SweepEvictsExpired`.
+- **MED-002 — FIXED.** `Publisher` interface lives in the controller package (controller:30-32) and
+  `*web.Broker` is adapted via `brokerPublisher` in main.go — controller never imports web, so no
+  import cycle. `publish()` is nil-safe (controller:38-42) and the reconciler defaults `Publisher` to
+  nil. The published id `req.Namespace+"/"+req.Name` exactly matches the stream subscribe key
+  `id := ns + "/" + name` (server.go:75). The adapter maps to `web.Event{HTML: html}` correctly.
+  Covered by `TestReconcile_PublishesOnSuccess`.
+- **MED-003 — FIXED.** Container `securityContext` (runAsNonRoot, allowPrivilegeEscalation:false,
+  caps drop ALL, seccompProfile RuntimeDefault) plus pod `fsGroup: 65532` are present and identical in
+  both `config/manager/deployment.yaml` and the regenerated `deploy/kscribe.yaml`. Valid YAML.
+  `readOnlyRootFilesystem` is intentionally omitted with an inline upgrade note. See LOW-003 caveat.
+- **LOW-001 (config comment) — FIXED.** The `RedactEnabled` comment now states redaction is always-on
+  and the flag is audit metadata (config.go:38-40).
+- **LOW-003 (error body) — FIXED.** `openai.go:61` truncates via `io.LimitReader(resp.Body, 512)`.
+- **LOW-002** — remains a deliberate MVP deferral; not re-flagged.
 
 ## Findings
 
-### [HIGH-001] ADR-003 storage-failure requeue is a no-op; CR stuck in Diagnosing *(High)*
-**File**: `internal/controller/kscribediagnosis_controller.go:52-57`, `170-183`
+### [LOW-001] HIGH-001 recovery can write a duplicate diagnoses row + second LLM call in a narrow window *(Low)*
+**File**: `internal/controller/kscribediagnosis_controller.go:191-241`; `internal/store/sqlite.go:141-155`
 **Category**: Correctness
-**Issue**: On `InsertDiagnosis` failure the reconciler sets `Persisted=false` and returns `ctrl.Result{RequeueAfter: 30s}, err` to retry the persist (ADR-003). But the CR was already moved to `Diagnosing` (line 80-92, persisted to the API server). On the requeue, `Reconcile` re-enters and the top-of-function guard only proceeds for `"" | Pending`; `Diagnosing` falls through to `default: return ctrl.Result{}, nil`. The requeue therefore does nothing — the SQLite write is never retried, the in-memory RCA is lost, and the CR is permanently `Diagnosing` / `Persisted=false`. The same trap bricks any CR if the operator crashes between the `Diagnosing` status update and `InsertDiagnosis`. ADR-003's *ordering* (persist before phase flip) is correct; its *recovery* path is not.
-**Fix**: Allow `Diagnosing` to be re-processed when not yet persisted. Either add `Diagnosing` to the proceed case when `!kd.Status.Persisted` (re-running the agent), or — cheaper — short-circuit at the top: if phase is `Diagnosing` and a completed-but-unpersisted record exists, re-attempt `InsertDiagnosis` only. Minimal version:
-```go
-case kscribev1alpha1.DiagnosisPhaseDiagnosing:
-    if kd.Status.Persisted { return ctrl.Result{}, nil }
-    // fall through to re-run diagnosis + persist
-```
-Add a test that fails the store's `InsertDiagnosis` once, then asserts a later reconcile persists and reaches `Done`.
+**Issue**: The recovery branch re-runs the *entire* diagnosis path. In the primary failure mode
+(`InsertDiagnosis` itself fails) this is harmless — no row was written. But in the secondary mode where
+`InsertDiagnosis` *succeeds* and the subsequent final `r.Status().Update(... Done)` (line 241) fails,
+the CR is left `Diagnosing` with the API server still showing `Persisted=false`. The requeue then
+re-enters `Diagnosing && !Persisted` and runs again: a **second LLM call** (cost) and a **second
+`InsertDiagnosis`**. `diagnoses` is an append-only history table (plain INSERT, non-unique
+`idx_diagnoses_incident`), and `GetIncident` reads all rows `ORDER BY created_at ASC` (sqlite.go:204-207),
+so the detail view would show two diagnosis entries for one incident. This is at-least-once semantics
+consistent with ADR-003 and strictly better than iteration-1's "stranded forever," but it is a new
+(narrow) consequence of the fix.
+**Fix**: Acceptable for MVP as-is. If undesired, either (a) re-fetch and short-circuit when a diagnoses
+row already exists for `(namespace,name)` before re-inserting, or (b) make `InsertDiagnosis` an upsert
+keyed on `(namespace,name)`. Low priority — only triggers on the InsertDiagnosis-succeeds-then-CR-update-fails race.
 
----
+### [LOW-002] dedup.go fails gofmt (const block alignment) *(Low)*
+**File**: `internal/controller/dedup.go:10-13`
+**Category**: Simplicity / Hygiene
+**Issue**: `gofmt -l` flags the file: the new `const (...)` block is misaligned
+(`defaultDedupTTL   =` has an extra space vs `dedupSweepThresh =`). A CI `gofmt`/`gofmt -l` gate would
+fail on this.
+**Fix**: Run `gofmt -w internal/controller/dedup.go` (removes one space so the `=` columns align).
 
-### [HIGH-002] Event-watcher Create does not treat AlreadyExists as success → reconcile error storm after restart *(High)*
-**File**: `internal/controller/event_watcher.go:113` (and `processEvent` 54-72)
-**Category**: Correctness
-**Issue**: Idempotency relies on two layers — the deterministic CR name `ksd-<uid>` and the in-memory `Deduper`. The `Deduper` is per-process and cleared on restart (`dedup.go:14`). Kubernetes Events persist ~1h, so after any operator restart the watcher re-lists existing Warning events, `ShouldProcess` returns true (fresh map), and `createDiagnosis` calls `Client.Create` for a CR that already exists. The returned `AlreadyExists` error propagates out of `Reconcile` as a non-nil error, so controller-runtime requeues with backoff and retries forever (until the event is GC'd), per event — error-level log spam and wasted work that also masks genuine create failures. The deterministic name correctly guarantees "exactly one CR per event" (REQ-001), but the error handling defeats idempotency.
-**Fix**: Treat `AlreadyExists` as success:
-```go
-import apierrors "k8s.io/apimachinery/pkg/api/errors"
-...
-if err := r.deps.Client.Create(ctx, ksd); err != nil && !apierrors.IsAlreadyExists(err) {
-    return err
-}
-return nil
-```
-
----
-
-### [MED-001] Deduper map grows unbounded (lazy eviction only on same-key re-access) *(Medium)*
-**File**: `internal/controller/dedup.go:31-40`
-**Category**: Memory / Correctness
-**Issue**: `ShouldProcess` evicts a stale entry only when *that same key* is queried again. Keys are event UIDs, which are unique and never re-queried, so expired entries are never removed — the `seen` map grows for the life of the process (one entry per accepted event). The `// Lazy-evicts stale entries on access` comment overstates the behavior. Bounded only by events/hour × uptime and reset by the single-replica restart, so not catastrophic, but it is an unbounded map on the hot path.
-**Fix**: Sweep on write — when the map exceeds a threshold, drop entries whose expiry is in the past — or run a background `time.Ticker` GC goroutine that deletes expired keys. A few lines in `ShouldProcess`:
-```go
-if len(d.seen) > 1024 {
-    for k, exp := range d.seen { if now.After(exp) { delete(d.seen, k) } }
-}
-```
-
----
-
-### [MED-002] SSE broker has no publisher in production; dashboard never live-updates *(Medium)*
-**File**: `cmd/kscribe/main.go:128,144-154`; `internal/web/server.go:72-106`
-**Category**: Correctness
-**Issue**: `broker.Publish` is invoked only from a test (`internal/web/server_test.go:197`). `main.go` constructs the broker and hands it to `web.New`, but the `KscribeDiagnosisReconciler` is never given a broker reference and never publishes, so the `/incidents/{ns}/{name}/stream` SSE endpoint accepts connections but no diagnosis-progress events are ever emitted. The live-update feature is wired end-to-end except for the producer.
-**Fix**: Inject the broker into the reconciler and `Publish` a rendered fragment on each phase transition (Diagnosing / Done / Partial / Failed), keyed by `namespace + "/" + name`. If live updates are out of MVP scope, drop the SSE handler and broker to avoid dead infrastructure.
-
----
-
-### [MED-003] Manager Deployment has no securityContext hardening *(Medium)*
-**File**: `deploy/kscribe.yaml:536-570` (container spec)
-**Category**: Security
-**Issue**: For a security-sensitive operator with cluster-wide read RBAC, the pod/container spec sets no `securityContext`: no `runAsNonRoot`, no `allowPrivilegeEscalation: false`, no `capabilities: drop: [ALL]`, no `seccompProfile`, no `readOnlyRootFilesystem`. The container can run as root and escalate. These are free hardening wins.
-**Fix**: Add a container `securityContext`:
-```yaml
-securityContext:
-  runAsNonRoot: true
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true   # /data is a writable PVC mount; add an emptyDir for /tmp if needed
-  capabilities: { drop: ["ALL"] }
-  seccompProfile: { type: RuntimeDefault }
-```
-
----
-
-### [LOW-001] RedactEnabled config flag does not gate redaction (misleading) *(Low)*
-**File**: `internal/config/config.go:38-39`; `internal/enricher/payload.go:85-88`
-**Category**: Correctness / Clarity
-**Issue**: `EncodeSnapshot` always calls `RedactSnapshot` regardless of `KSCRIBE_REDACT_ENABLED`. The flag only flows into `prompt_redacted` (DB column) and a log line. Setting it to `false` does **not** disable redaction. This is fail-safe (good) but the field comment "controls whether sensitive data is scrubbed" is wrong and could mislead an operator into thinking they can toggle it.
-**Fix**: Either honor the flag explicitly at the single `EncodeSnapshot` chokepoint (keeping redaction the default), or update the comment/docs to state redaction is always on and the flag is audit metadata only. Given SEC-001, keeping it always-on and fixing the comment is the safer choice.
-
----
-
-### [LOW-002] Rich enricher context (BuildSnapshot) is dead in production *(Low)*
-**File**: `internal/controller/kscribediagnosis_controller.go:99-108`; `internal/enricher/context_builder.go`
-**Category**: Correctness / Completeness
-**Issue**: The reconciler builds the LLM snapshot from CR spec fields only (reason/message/object identity). `BuildSnapshot` — which collects pod logs, env vars, related events, node conditions — is called only from tests, and `ToolExecutor` is nil so tool calls return a stub error. In its current form the operator sends almost no diagnostic context to the LLM. This is an explicit MVP `ponytail` decision, not a defect, but it materially limits RCA quality and should be tracked. (Positive side effect: it keeps the un-redacted log/env collection path out of the LLM flow entirely, reinforcing SEC-001.)
-**Fix**: Wire `BuildSnapshot` (with a `kubernetes.Interface` + `client.Client`) and a real `ToolExecutor` into the reconciler; the `EncodeSnapshot` chokepoint already enforces redaction so no SEC-001 change is needed.
-
----
-
-### [LOW-003] Raw provider response body embedded in stored error *(Low)*
-**File**: `internal/agent/openai.go:60-63`
-**Category**: Security / Hygiene
-**Issue**: On a non-2xx provider response the full body is interpolated into the error (`provider error %d: %s`). That error becomes `Outcome.RawError`, surfaced in the CR `Diagnosed=False` condition message and persisted to SQLite. Provider error bodies are low-risk but can contain organization/account detail; they are also unbounded in size.
-**Fix**: Truncate the body (e.g. first 512 bytes) and avoid echoing it verbatim into durable CR status; log the full body at debug level instead.
+### [LOW-003] securityContext runAsNonRoot assumes a non-root image USER (unverifiable here) *(Low)*
+**File**: `config/manager/deployment.yaml:50-52`; `deploy/kscribe.yaml:565-567`
+**Category**: Security / Ops
+**Issue**: `runAsNonRoot: true` is set without a `runAsUser`, and `fsGroup: 65532` implies the distroless
+nonroot UID. There is no `Dockerfile` in the repo to confirm the image declares `USER 65532` (or any
+non-root USER). If the published image runs as root, the kubelet will refuse to start the pod
+("container has runAsNonRoot and image will run as root"). Cannot be verified from this diff.
+**Fix**: Confirm the image sets a non-root `USER` (ideally 65532 to match `fsGroup`), or add an explicit
+`runAsUser: 65532` to the container securityContext to make the contract self-contained.
 
 ## What's Good
 
-- **SEC-001 holds firmly**: `EncodeSnapshot` (`payload.go:85-88`) is the only serialization path for a `Snapshot` and redacts-then-marshals; redaction cannot be bypassed, env vars sourced from `valueFrom` are stubbed to a placeholder (`context_builder.go:199-201`), and the only other `sonic.Marshal` calls are the OpenAI request and the RCA payload — neither carries raw cluster data.
-- **CON-003 clean**: no `encoding/json` anywhere in application code (one test file imports it, which the constraint does not cover); sonic used throughout.
-- **Store is injection-proof and fails closed**: every query is fully parameterized including the `LIMIT ?` and upsert (`store/sqlite.go`), `SetMaxOpenConns(1)` avoids SQLite write races, and `runMigrations` runs each file in its own transaction and returns an error (closing the DB) on any failure (`migrations.go`, `sqlite.go:86-89`).
-- **Secret handling**: `KSCRIBE_LLM_API_KEY` comes from a `secretKeyRef` and the startup `slog.Info` config dump deliberately omits it.
-- **SSE broker concurrency is correct**: mutex-guarded subscriber map, non-blocking drop on full buffers (no publisher deadlock), and `unsubscribe` prunes empty incident maps — no goroutine or subscriber leak given the `defer cancel()` in the handler.
-- **RBAC is least-privilege**: read-mostly verbs on events/pods/nodes/logs/deployments/replicasets, write only on the operator's own CRDs and their `/status`.
+- The new tests are real behavioural tests, not always-pass: `TestReconcile_SQLiteFailureThenRecovery`
+  fails the store once and asserts the `Diagnosing/!Persisted` → `Done/Persisted` transition; the
+  AlreadyExists and sweep tests assert the actual post-conditions.
+- MED-002 was solved without an import cycle by defining the one-method `Publisher` interface in the
+  consumer package and keeping the `web` dependency confined to a 1-line adapter in main.go.
+- The MED-001 sweep reuses the existing critical section — no second lock, no background goroutine —
+  the minimal correct fix.
 
 ## Pre-Merge Checklist
 
-**Always:**
-- [ ] HIGH-001 resolved — Diagnosing/unpersisted CRs can recover and persist
-- [ ] HIGH-002 resolved — `AlreadyExists` treated as success on the create path
-- [x] No secrets or credentials in committed files (API key via Secret)
-- [x] `.gitignore` covers new artifact/config types
-- [x] SQL parameterized; migrations fail closed
-- [ ] Deployment hardened with a securityContext (MED-003)
+- [x] HIGH-001 resolved — Diagnosing/unpersisted CRs recover to Done (test-covered)
+- [x] HIGH-002 resolved — `AlreadyExists` treated as success; genuine errors still propagate
+- [x] MED-001 resolved — deduper sweeps under-lock with injectable clock
+- [x] MED-002 resolved — Publisher wired, nil-safe, id matches route key, no import cycle
+- [x] MED-003 resolved — securityContext in both source and generated manifests
+- [x] `go build`, `go vet`, `go test` (controller + web) pass
+- [ ] `gofmt -w internal/controller/dedup.go` (LOW-002)
 
 ## Machine-Readable Verdict
 
 ```yaml
-verdict: Request Changes
+verdict: Approve
 critical: 0
-high: 2
-medium: 3
+high: 0
+medium: 0
 low: 3
 info: 0
-blocking_ids: [HIGH-001, HIGH-002]
+blocking_ids: []
 ```

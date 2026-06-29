@@ -12,8 +12,8 @@ type RCAResult struct {
 
 // Message is a single turn in an LLM conversation.
 type Message struct {
-	Role       string     `json:"role"`                   // system | user | assistant | tool
-	Content    string     `json:"content,omitempty"`      // omitted when tool_calls present
+	Role       string     `json:"role"`              // system | user | assistant | tool
+	Content    string     `json:"content,omitempty"` // omitted when tool_calls present
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // set on tool-result messages
 	Name       string     `json:"name,omitempty"`         // tool name on tool-result messages

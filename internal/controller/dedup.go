@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	defaultDedupTTL   = time.Hour
-	dedupSweepThresh  = 1024 // ponytail: sweep when map exceeds this; increase if event rate is very high
+	defaultDedupTTL  = time.Hour
+	dedupSweepThresh = 1024 // ponytail: sweep when map exceeds this; increase if event rate is very high
 )
 
 // Deduper is a TTL-based in-memory deduplication guard.

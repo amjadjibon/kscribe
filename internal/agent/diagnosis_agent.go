@@ -21,9 +21,9 @@ type Outcome struct {
 // ponytail: no retry/backoff beyond one JSON repair; no provider plugin system.
 type DiagnosisAgent struct {
 	Provider Provider
-	Executor ToolExecutor    // may be nil; tool calls return an error message if so
+	Executor ToolExecutor // may be nil; tool calls return an error message if so
 	Tools    []ToolDefinition
-	MaxIter  int             // 0 falls back to 5
+	MaxIter  int // 0 falls back to 5
 }
 
 const systemPrompt = `You are a Kubernetes SRE expert. Analyse the provided cluster context and produce a root-cause analysis (RCA). Use the available tools if you need more information. When you have sufficient information, respond ONLY with a JSON object matching this exact schema (no prose, no markdown fences):
