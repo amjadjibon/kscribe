@@ -20,7 +20,8 @@ kscribe sends enriched, redacted cluster context (event messages, pod metadata, 
 
 The Helm chart (`charts/kscribe`) is the single source of truth for the install.
 `deploy/kscribe.yaml` is **generated** from it (`scripts/build-manifest.sh`) for
-users who prefer plain `kubectl` — do not edit it by hand.
+users who prefer plain `kubectl` — do not edit it by hand. See
+[docs/manifests.md](docs/manifests.md) for the full pipeline and what to edit where.
 
 ### Option A — Helm (recommended)
 
