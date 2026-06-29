@@ -131,6 +131,38 @@ func TestDuplicateCreatesOnlyOne(t *testing.T) {
 	}
 }
 
+// (e-pre) HIGH-002: Create returns AlreadyExists (post-restart deduper fresh, CR already exists)
+// — must not return an error and must not create a second CR.
+func TestAlreadyExistsIsSuccess(t *testing.T) {
+	scheme := testScheme()
+	ev := makeEvent("uid-dup", "default", corev1.EventTypeWarning, "BackOff")
+
+	// Pre-create the CR that diagnosisName would produce (simulates prior reconcile surviving a restart).
+	existing := &kscribev1alpha1.KscribeDiagnosis{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      diagnosisName(ev),
+			Namespace: "kscribe-system",
+		},
+		Spec: kscribev1alpha1.KscribeDiagnosisSpec{
+			Reason:  ev.Reason,
+			Message: ev.Message,
+		},
+		Status: kscribev1alpha1.KscribeDiagnosisStatus{Phase: kscribev1alpha1.DiagnosisPhaseDone},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&kscribev1alpha1.KscribeDiagnosis{}).WithObjects(existing).Build()
+	// Fresh deduper (simulates restart): Deduper has no entry for this event yet.
+	w := buildWatcher(cl, NewDeduper(time.Hour), testCfg())
+
+	if err := w.processEvent(context.Background(), ev); err != nil {
+		t.Fatalf("processEvent must return nil on AlreadyExists, got: %v", err)
+	}
+
+	// Still only the one pre-existing CR.
+	if items := listDiagnoses(t, cl); len(items) != 1 {
+		t.Fatalf("got %d CRs after AlreadyExists, want 1", len(items))
+	}
+}
+
 // (e) accepted Warning event creates exactly one KscribeDiagnosis with the right spec fields.
 func TestAcceptedWarningCreatesDiagnosis(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(testScheme()).Build()
@@ -165,5 +197,46 @@ func TestAcceptedWarningCreatesDiagnosis(t *testing.T) {
 		if fmt.Sprint(c.got) != fmt.Sprint(c.want) {
 			t.Errorf("%s = %v, want %v", c.field, c.got, c.want)
 		}
+	}
+}
+
+// TestDeduper_SweepEvictsExpired proves MED-001: expired entries are swept when the map
+// exceeds dedupSweepThresh, not just on same-key re-access.
+func TestDeduper_SweepEvictsExpired(t *testing.T) {
+	// Use an injectable clock so we can advance time without sleeping.
+	var fakeNow = time.Now()
+	d := NewDeduper(time.Hour)
+	d.now = func() time.Time { return fakeNow }
+
+	// Fill the map past the sweep threshold with entries that will expire.
+	shortTTL := time.Minute
+	for i := range dedupSweepThresh + 1 {
+		key := fmt.Sprintf("uid-%d", i)
+		d.ttl = shortTTL
+		d.ShouldProcess(key)
+	}
+
+	// Confirm map is at/above threshold.
+	d.mu.Lock()
+	sizeBefore := len(d.seen)
+	d.mu.Unlock()
+	if sizeBefore < dedupSweepThresh {
+		t.Fatalf("want len >= %d before sweep, got %d", dedupSweepThresh, sizeBefore)
+	}
+
+	// Advance clock past the TTL so all entries are expired.
+	fakeNow = fakeNow.Add(shortTTL + time.Second)
+
+	// Adding one more key triggers the sweep.
+	d.ttl = time.Hour
+	d.ShouldProcess("trigger-sweep")
+
+	d.mu.Lock()
+	sizeAfter := len(d.seen)
+	d.mu.Unlock()
+
+	// After sweep, only the new entry should remain.
+	if sizeAfter != 1 {
+		t.Fatalf("want map len=1 after sweep of expired entries, got %d", sizeAfter)
 	}
 }

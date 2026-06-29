@@ -126,9 +126,9 @@ func TestDetail(t *testing.T) {
 	defer ts.Close()
 
 	cases := []struct {
-		path        string
-		wantPhase   string
-		wantInBody  string
+		path       string
+		wantPhase  string
+		wantInBody string
 	}{
 		{"/incidents/default/done-incident", "Done", "Container OOM"},
 		{"/incidents/default/partial-incident", "Partial", "partial-incident"},

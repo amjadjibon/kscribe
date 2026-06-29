@@ -148,3 +148,19 @@ func TestDuration(t *testing.T) {
 		t.Errorf("ResyncPeriod: want %v, got %v", want, cfg.ResyncPeriod)
 	}
 }
+
+func TestLoad_InvalidDuration(t *testing.T) {
+	t.Setenv("KSCRIBE_RESYNC_PERIOD", "not-a-duration")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should return an error for an invalid duration value")
+	}
+}
+
+func TestLoad_InvalidInt(t *testing.T) {
+	t.Setenv("KSCRIBE_MAX_ITERATIONS", "not-a-number")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should return an error for an invalid integer value")
+	}
+}

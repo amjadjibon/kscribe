@@ -201,10 +201,10 @@ func TestListIncidentsAndGetIncident(t *testing.T) {
 	for i, n := range names {
 		started := now.Add(time.Duration(i) * time.Second)
 		if err := s.UpsertIncident(ctx, Incident{
-			Namespace:  "ns1",
-			Name:       n,
-			Phase:      "Done",
-			StartedAt:  &started,
+			Namespace:   "ns1",
+			Name:        n,
+			Phase:       "Done",
+			StartedAt:   &started,
 			LLMProvider: "openai",
 		}); err != nil {
 			t.Fatalf("upsert %s: %v", n, err)

@@ -2,6 +2,138 @@
 
 kscribe is a Kubernetes operator that automatically diagnoses events using an LLM and persists RCA results into a SQLite history mirror.
 
+---
+
+## Limitations
+
+**CON-005 — core v1 Events only.** kscribe watches `core/v1 Event` objects (Warning type) exclusively. It does not watch custom events or metrics signals. Pod-log enrichment is available via the tool executor (future wire-in); the MVP uses spec fields from the triggered event.
+
+---
+
+## Security notice — LLM data egress (SEC-003)
+
+kscribe sends enriched, redacted cluster context (event messages, pod metadata, log lines) to the configured LLM provider (default: OpenAI). Sensitive strings matching known patterns (tokens, passwords, PEM keys, connection strings) are scrubbed before transmission (`KSCRIBE_REDACT_ENABLED=true` by default). You remain responsible for reviewing what cluster data leaves your environment. Do not disable redaction in production.
+
+---
+
+## In-cluster deployment
+
+### 1. Apply the bundle
+
+```sh
+kubectl apply -f deploy/kscribe.yaml
+```
+
+### 2. Create the LLM API-key Secret
+
+The Deployment reads `KSCRIBE_LLM_API_KEY` from a Secret named `kscribe-llm-secret` in the `kscribe-system` namespace. Create it before or immediately after applying the bundle:
+
+```sh
+kubectl create secret generic kscribe-llm-secret \
+  --namespace kscribe-system \
+  --from-literal=api-key=<your-openai-api-key>
+```
+
+### 3. Verify
+
+```sh
+kubectl rollout status deployment/kscribe-manager -n kscribe-system
+kubectl get kscribediagnoses -n kscribe-system
+```
+
+The dashboard is available via the `kscribe-dashboard` ClusterIP Service on port 8080. Port-forward for local access:
+
+```sh
+kubectl port-forward svc/kscribe-dashboard 8080:8080 -n kscribe-system
+```
+
+---
+
+## Custom Resource examples
+
+### DiagnosisPolicy — namespace-scoped policy override
+
+```yaml
+apiVersion: kscribe.amjadjibon.dev/v1alpha1
+kind: DiagnosisPolicy
+metadata:
+  name: my-policy
+  namespace: my-app-namespace
+spec:
+  enabled: true
+  eventReasons:
+  - BackOff
+  - OOMKilling
+  llmProvider: openai
+  llmModel: gpt-4o-mini
+  maxIterations: 3
+  redact: true
+```
+
+A `default` DiagnosisPolicy is automatically installed in `kscribe-system` and acts as the cluster-wide fallback when no namespace-scoped policy exists.
+
+### KscribeDiagnosis — auto-created by the operator
+
+KscribeDiagnosis CRs are created automatically from Warning events. You should not create them manually. Example of what the operator produces:
+
+```yaml
+apiVersion: kscribe.amjadjibon.dev/v1alpha1
+kind: KscribeDiagnosis
+metadata:
+  name: ksd-<event-uid>
+  namespace: kscribe-system
+spec:
+  involvedObjectKind: Pod
+  involvedObjectName: my-pod
+  involvedObjectNamespace: default
+  reason: BackOff
+  message: "Back-off restarting failed container"
+  eventUID: "abc123"
+status:
+  phase: Done
+  summary: "Container exits due to missing config mount"
+  rootCause: "ConfigMap 'app-config' not found in namespace 'default'"
+```
+
+---
+
+## Local development
+
+```sh
+# Build binary
+make build
+
+# Run all tests
+make test
+
+# Run go vet
+make vet
+
+# Regenerate deep-copy objects
+make generate
+
+# Regenerate CRD and RBAC manifests
+make manifests
+
+# Regenerate templ templates
+make templ
+
+# Rebuild deploy/kscribe.yaml and assert reproducibility
+make manifest-check
+```
+
+Run locally against a cluster (requires KUBECONFIG or in-cluster config):
+
+```sh
+go run ./cmd/kscribe \
+  --addr :8080 \
+  --operator-namespace kscribe-system
+```
+
+Set `KSCRIBE_LLM_API_KEY` in your environment for LLM calls.
+
+---
+
 ## Upgrades & migrations
 
 Migrations run automatically at operator startup. **They fail closed (ADR-004):** if any migration cannot be applied cleanly, the process exits with an error rather than starting with a partially upgraded schema.

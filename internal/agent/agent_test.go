@@ -46,8 +46,8 @@ func toolCallResp(tokens int) agent.Response {
 			Message: agent.Message{
 				Role: "assistant",
 				ToolCalls: []agent.ToolCall{{
-					ID:   "c1",
-					Type: "function",
+					ID:       "c1",
+					Type:     "function",
 					Function: agent.FunctionCall{Name: "get_pod_logs", Arguments: `{"namespace":"default","pod":"pod-1"}`},
 				}},
 			},
