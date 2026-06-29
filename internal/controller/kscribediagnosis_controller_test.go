@@ -47,6 +47,10 @@ type fixedProvider struct {
 	err  error
 }
 
+type fakePublisher struct{ calls int }
+
+func (p *fakePublisher) Publish(_, _ string) { p.calls++ }
+
 func (p *fixedProvider) Complete(_ context.Context, _ agent.Request) (agent.Response, error) {
 	return p.resp, p.err
 }
@@ -190,6 +194,89 @@ func TestReconcile_SQLiteFailureKeepsDiagnosing(t *testing.T) {
 		if c.Type == kscribev1alpha1.ConditionPersisted && c.Status == metav1.ConditionTrue {
 			t.Fatal("Persisted condition must not be True after SQLite failure")
 		}
+	}
+}
+
+// TestReconcile_SQLiteFailureThenRecovery proves HIGH-001:
+// after InsertDiagnosis fails the CR is left Diagnosing/Persisted=false,
+// and a subsequent reconcile retries the persist path and reaches Done.
+func TestReconcile_SQLiteFailureThenRecovery(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-recover", "default")
+	fc := buildClient(scheme, kd).Build()
+
+	st := &fakeStore{insertErr: errors.New("disk full")}
+	r := reconcilerFor(st, goodProvider())
+	r.Client = fc
+
+	// First reconcile: InsertDiagnosis fails.
+	result, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-recover", Namespace: "default"},
+	})
+	if err == nil && result.RequeueAfter == 0 {
+		t.Fatal("expected error or RequeueAfter on first reconcile with store failure")
+	}
+
+	// CR should be Diagnosing and not persisted.
+	var mid kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-recover", Namespace: "default"}, &mid); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if mid.Status.Phase != kscribev1alpha1.DiagnosisPhaseDiagnosing {
+		t.Fatalf("after store failure: want Diagnosing, got %s", mid.Status.Phase)
+	}
+	if mid.Status.Persisted {
+		t.Fatal("after store failure: Persisted must be false")
+	}
+
+	// Clear the store error — simulates transient failure resolved.
+	st.insertErr = nil
+
+	// Second reconcile: should succeed and reach Done.
+	_, err = r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-recover", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("second reconcile unexpected error: %v", err)
+	}
+
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-recover", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR after recovery: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhaseDone {
+		t.Fatalf("after recovery: want Done, got %s", got.Status.Phase)
+	}
+	if !got.Status.Persisted {
+		t.Fatal("after recovery: Persisted must be true")
+	}
+	// InsertDiagnosis should have been called twice (once failing, once succeeding).
+	if st.insertCalled != 2 {
+		t.Fatalf("want insertCalled=2, got %d", st.insertCalled)
+	}
+}
+
+// TestReconcile_PublishesOnSuccess proves MED-002: a successful reconcile emits at least one SSE publish.
+func TestReconcile_PublishesOnSuccess(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-pub", "default")
+	fc := buildClient(scheme, kd).Build()
+
+	pub := &fakePublisher{}
+	st := &fakeStore{}
+	r := reconcilerFor(st, goodProvider())
+	r.Client = fc
+	r.Publisher = pub
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-pub", Namespace: "default"},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pub.calls == 0 {
+		t.Fatal("expected at least one Publish call on successful diagnosis")
 	}
 }
 

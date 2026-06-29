@@ -58,7 +58,8 @@ func (c *OpenAIClient) Complete(ctx context.Context, req Request) (Response, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
+		// Truncate to 512 bytes so raw provider detail is not embedded in durable CR status / SQLite.
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return Response{}, fmt.Errorf("provider error %d: %s", resp.StatusCode, b)
 	}
 

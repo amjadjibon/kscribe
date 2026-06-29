@@ -35,7 +35,9 @@ type Config struct {
 	// will act on. Comma-separated in env form.
 	EventReasonAllowlist []string `env:"KSCRIBE_EVENT_REASON_ALLOWLIST" envSeparator:"," envDefault:"BackOff,OOMKilling,Failed,FailedScheduling"`
 
-	// RedactEnabled controls whether sensitive data is scrubbed from logs.
+	// RedactEnabled is audit metadata only — redaction is always enforced by EncodeSnapshot
+	// (SEC-001) and cannot be disabled via this flag. The value flows to prompt_redacted
+	// in SQLite and to structured logs so operators can audit redaction posture.
 	RedactEnabled bool `env:"KSCRIBE_REDACT_ENABLED" envDefault:"true"`
 
 	// DBPath is the filesystem path for the SQLite state database.

@@ -27,6 +27,12 @@ import (
 
 var scheme = runtime.NewScheme()
 
+// brokerPublisher adapts *web.Broker to controller.Publisher, avoiding an import cycle.
+// ponytail: thin adapter — no state beyond the broker reference.
+type brokerPublisher struct{ b *web.Broker }
+
+func (p *brokerPublisher) Publish(id, html string) { p.b.Publish(id, web.Event{HTML: html}) }
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(kscribev1alpha1.AddToScheme(scheme))
@@ -146,6 +152,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				Scheme:        mgr.GetScheme(),
 				Store:         st,
 				AgentProvider: provider,
+				Publisher:     &brokerPublisher{b: broker},
 				MaxIter:       cfg.MaxIterations,
 				Concurrency:   cfg.DiagnosisConcurrency,
 				Tools:         agent.KubeTools(),

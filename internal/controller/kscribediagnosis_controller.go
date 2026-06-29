@@ -26,16 +26,30 @@ type DiagnosisStore interface {
 	InsertDiagnosis(ctx context.Context, d store.Diagnosis, rcaPayload any) error
 }
 
+// Publisher is the SSE producer interface. *web.Broker satisfies this via a thin adapter
+// in main.go to avoid an import cycle (MED-002). html is a pre-rendered HTML fragment.
+type Publisher interface {
+	Publish(id, html string)
+}
+
 // KscribeDiagnosisReconciler reconciles KscribeDiagnosis objects.
 type KscribeDiagnosisReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
 	Store         DiagnosisStore
 	AgentProvider agent.Provider
-	MaxIter       int // default max tool-call iterations; overridable via CR spec
-	Concurrency   int // MaxConcurrentReconciles; 0 defaults to 1
+	Publisher     Publisher // may be nil; no-op when absent
+	MaxIter       int       // default max tool-call iterations; overridable via CR spec
+	Concurrency   int       // MaxConcurrentReconciles; 0 defaults to 1
 	Tools         []agent.ToolDefinition
 	ToolExecutor  agent.ToolExecutor // may be nil for MVP stub
+}
+
+// publish emits an SSE fragment if a Publisher is wired; no-op otherwise.
+func (r *KscribeDiagnosisReconciler) publish(id, html string) {
+	if r.Publisher != nil {
+		r.Publisher.Publish(id, html)
+	}
 }
 
 // Reconcile drives a KscribeDiagnosis CR from Pending → Diagnosing → Done/Partial/Failed.
@@ -48,10 +62,15 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Only act on Pending (or unset) phase — skip all others.
+	// Proceed for Pending/unset, or Diagnosing when not yet persisted (ADR-003 crash recovery).
 	switch kd.Status.Phase {
 	case "", kscribev1alpha1.DiagnosisPhasePending:
 		// proceed
+	case kscribev1alpha1.DiagnosisPhaseDiagnosing:
+		if kd.Status.Persisted {
+			return ctrl.Result{}, nil
+		}
+		// Unpersisted Diagnosing: re-run diagnosis+persist so a transient store failure recovers.
 	default:
 		return ctrl.Result{}, nil
 	}
@@ -90,6 +109,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err := r.Status().Update(ctx, &kd); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update status (diagnosing): %w", err)
 	}
+	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Diagnosing">%s</span>`, kscribev1alpha1.DiagnosisPhaseDiagnosing))
 	// Re-fetch for fresh ResourceVersion before the next status update.
 	if err := r.Get(ctx, req.NamespacedName, &kd); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -149,6 +169,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			Message:            outcome.RawError,
 			ObservedGeneration: kd.Generation,
 		})
+		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
 		return ctrl.Result{}, r.Status().Update(ctx, &kd)
 	}
 
@@ -217,6 +238,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Message:            "Diagnosis complete",
 		ObservedGeneration: kd.Generation,
 	})
+	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="%s">%s</span>`, outcome.Phase, outcome.Phase))
 	return ctrl.Result{}, r.Status().Update(ctx, &kd)
 }
 

@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -110,7 +111,12 @@ func (r *eventWatcher) createDiagnosis(ctx context.Context, ev *corev1.Event, po
 	if !ev.LastTimestamp.IsZero() {
 		ksd.Spec.LastTimestamp = &ev.LastTimestamp
 	}
-	return r.deps.Client.Create(ctx, ksd)
+	// Treat AlreadyExists as success: after a restart the Deduper is empty but the CR
+	// may already exist — returning an error here would cause an infinite backoff storm (HIGH-002).
+	if err := r.deps.Client.Create(ctx, ksd); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 // diagnosisName returns a stable, lowercase RFC-1123-safe name for the CR.

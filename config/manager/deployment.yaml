@@ -18,6 +18,8 @@ spec:
         app: kscribe-manager
     spec:
       serviceAccountName: kscribe-manager
+      securityContext:
+        fsGroup: 65532  # allows non-root user to write to the PVC mounted at /data
       containers:
       - name: manager
         image: ghcr.io/amjadjibon/kscribe:latest
@@ -46,6 +48,15 @@ spec:
         ports:
         - containerPort: 8080
           name: http
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+          # readOnlyRootFilesystem omitted: the operator writes to /tmp (Go runtime, templ).
+          # Add an emptyDir for /tmp and set readOnlyRootFilesystem: true when confirmed safe.
         resources:
           requests:
             cpu: 100m
