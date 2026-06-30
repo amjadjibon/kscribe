@@ -36,13 +36,11 @@ templ Layout(title string, content templ.Component) {
 					});
 				});
 			</script>
-			<link rel="preconnect" href="https://fonts.bunny.net"/>
-			<link href="https://fonts.bunny.net/css?family=inter:400,500,600|jetbrains-mono:400,500&display=swap" rel="stylesheet"/>
-			<link rel="stylesheet" href="/static/css/app.css"/>
-			<link rel="icon" href="/static/icons/favicon.svg" type="image/svg+xml"/>
-			<script defer src="/static/js/alpine.min.js"></script>
-			<script src="/static/js/htmx.min.js"></script>
-			<script src="/static/js/htmx-sse.min.js"></script>
+			<link rel="stylesheet" href={ Asset("/static/css/app.css") }/>
+			<link rel="icon" href={ Asset("/static/icons/favicon.svg") } type="image/svg+xml"/>
+			<script defer src={ Asset("/static/js/alpine.min.js") }></script>
+			<script src={ Asset("/static/js/htmx.min.js") }></script>
+			<script src={ Asset("/static/js/htmx-sse.min.js") }></script>
 		</head>
 		<body>
 			<header class="topbar">
