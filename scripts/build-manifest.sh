@@ -1,32 +1,29 @@
 #!/usr/bin/env bash
-# build-manifest.sh — concatenates all kscribe resources into deploy/kscribe.yaml.
-# Rerunning produces no diff when sources are unchanged (TASK-035 / TASK-038).
+# build-manifest.sh — render deploy/kscribe.yaml from the Helm chart, the single
+# source of truth. CRDs and RBAC are first regenerated from Go markers into the
+# chart by `make manifests`. Rerunning produces no diff when sources are unchanged.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${REPO_ROOT}/deploy/kscribe.yaml"
+NS="kscribe-system"
 
-# Regenerate CRDs and RBAC from Go source markers.
+# Regenerate CRDs + RBAC from Go source markers into the chart.
 make -C "${REPO_ROOT}" manifests
 
 mkdir -p "${REPO_ROOT}/deploy"
 
-# Explicit, deterministic order: CRDs → Namespace → SA → ClusterRole → CRB → PVC → Svc → Deploy → CR
-files=(
-  "${REPO_ROOT}/config/crd/bases/kscribe.amjadjibon.dev_diagnosispolicies.yaml"
-  "${REPO_ROOT}/config/crd/bases/kscribe.amjadjibon.dev_kscribediagnoses.yaml"
-  "${REPO_ROOT}/config/manager/namespace.yaml"
-  "${REPO_ROOT}/config/manager/serviceaccount.yaml"
-  "${REPO_ROOT}/config/rbac/role.yaml"
-  "${REPO_ROOT}/config/manager/clusterrolebinding.yaml"
-  "${REPO_ROOT}/config/manager/pvc.yaml"
-  "${REPO_ROOT}/config/manager/service.yaml"
-  "${REPO_ROOT}/config/manager/deployment.yaml"
-  "${REPO_ROOT}/config/manager/diagnosispolicy.yaml"
-)
-
-# Each source file already starts with ---; concatenating them is a valid
-# multi-document YAML stream with no extra separators needed.
-cat "${files[@]}" > "${OUT}"
+# helm template doesn't emit a Namespace (install uses --create-namespace), so the
+# flat kubectl manifest prepends one for a self-contained `kubectl apply -f`.
+{
+  echo "# GENERATED from charts/kscribe by scripts/build-manifest.sh — do not edit."
+  echo "apiVersion: v1"
+  echo "kind: Namespace"
+  echo "metadata:"
+  echo "  name: ${NS}"
+  helm template kscribe "${REPO_ROOT}/charts/kscribe" \
+    --include-crds \
+    --namespace "${NS}"
+} > "${OUT}"
 
 echo "Written: ${OUT}"

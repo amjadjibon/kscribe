@@ -20,6 +20,9 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      # deploy/kscribe.yaml is rendered from the Helm chart (make manifest-check).
+      - uses: azure/setup-helm@v4
+
       - name: gofmt
         run: test -z "$(gofmt -l cmd internal api)" || { gofmt -l cmd internal api; exit 1; }
 

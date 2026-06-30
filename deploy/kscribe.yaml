@@ -1,3 +1,10 @@
+# GENERATED from charts/kscribe by scripts/build-manifest.sh — do not edit.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kscribe-system
+---
+# Source: kscribe/crds/kscribe.amjadjibon.dev_diagnosispolicies.yaml
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -159,6 +166,9 @@ spec:
     storage: true
     subresources:
       status: {}
+
+---
+# Source: kscribe/crds/kscribe.amjadjibon.dev_kscribediagnoses.yaml
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -403,18 +413,59 @@ spec:
     storage: true
     subresources:
       status: {}
+
 ---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: kscribe-system
----
+# Source: kscribe/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: kscribe-manager
+  name: kscribe
   namespace: kscribe-system
+  labels:
+    helm.sh/chart: kscribe-0.1.0
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
 ---
+# Source: kscribe/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kscribe-llm
+  namespace: kscribe-system
+  labels:
+    helm.sh/chart: kscribe-0.1.0
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+stringData:
+  # Empty by default — the operator boots without it and only needs it to call
+  # the LLM. Set llm.apiKey, or point llm.existingSecret at your own Secret.
+  api-key: ""
+---
+# Source: kscribe/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kscribe-db
+  namespace: kscribe-system
+  labels:
+    helm.sh/chart: kscribe-0.1.0
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Source: kscribe/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -474,70 +525,81 @@ rules:
   - patch
   - update
 ---
+# Source: kscribe/templates/rbac.yaml
+# The ClusterRole "kscribe-role" is generated from Go //+kubebuilder:rbac markers
+# by `make manifests` into templates/role.yaml. This binds it to the operator's SA.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kscribe-manager-rolebinding
+  name: kscribe
+  labels:
+    helm.sh/chart: kscribe-0.1.0
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: kscribe-role
 subjects:
 - kind: ServiceAccount
-  name: kscribe-manager
+  name: kscribe
   namespace: kscribe-system
 ---
-# PVC for the SQLite state database (CON-006: single replica, single PVC).
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: kscribe-db
-  namespace: kscribe-system
-spec:
-  accessModes:
-  - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
----
+# Source: kscribe/templates/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: kscribe-dashboard
   namespace: kscribe-system
+  labels:
+    helm.sh/chart: kscribe-0.1.0
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
 spec:
+  type: ClusterIP
   selector:
-    app: kscribe-manager
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
   ports:
   - name: http
     port: 8080
-    targetPort: 8080
-  type: ClusterIP
+    targetPort: http
 ---
-# TASK-036: KSCRIBE_LLM_API_KEY is sourced from the kscribe-llm-secret Secret.
-# Create it before deploying: kubectl create secret generic kscribe-llm-secret \
-#   --namespace kscribe-system --from-literal=api-key=<your-openai-key>
+# Source: kscribe/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kscribe-manager
+  name: kscribe
   namespace: kscribe-system
+  labels:
+    helm.sh/chart: kscribe-0.1.0
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
 spec:
-  replicas: 1  # CON-006: single replica; Deduper and SQLite are per-process
+  replicas: 1
   selector:
     matchLabels:
-      app: kscribe-manager
+      app.kubernetes.io/name: kscribe
+      app.kubernetes.io/instance: kscribe
   template:
     metadata:
       labels:
-        app: kscribe-manager
+        app.kubernetes.io/name: kscribe
+        app.kubernetes.io/instance: kscribe
     spec:
-      serviceAccountName: kscribe-manager
+      serviceAccountName: kscribe
       securityContext:
-        fsGroup: 65532  # allows non-root user to write to the PVC mounted at /data
+        fsGroup: 65532
       containers:
       - name: manager
         image: ghcr.io/amjadjibon/kscribe:latest
+        imagePullPolicy: IfNotPresent
         env:
         - name: KSCRIBE_DB_PATH
           value: /data/kscribe.db
@@ -548,72 +610,77 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         - name: KSCRIBE_LLM_PROVIDER
-          value: openai
+          value: "openai"
         - name: KSCRIBE_LLM_MODEL
-          value: gpt-4o-mini
+          value: "gpt-4o-mini"
         - name: KSCRIBE_LLM_API_KEY
           valueFrom:
             secretKeyRef:
-              name: kscribe-llm-secret
+              name: kscribe-llm
               key: api-key
+              optional: true
         - name: KSCRIBE_LEADER_ELECT
           value: "false"
         - name: KSCRIBE_REDACT_ENABLED
           value: "true"
         ports:
-        - containerPort: 8080
-          name: http
+        - name: http
+          containerPort: 8080
         securityContext:
-          runAsNonRoot: true
           allowPrivilegeEscalation: false
           capabilities:
-            drop: ["ALL"]
+            drop:
+            - ALL
+          runAsNonRoot: true
           seccompProfile:
             type: RuntimeDefault
-          # readOnlyRootFilesystem omitted: the operator writes to /tmp (Go runtime, templ).
-          # Add an emptyDir for /tmp and set readOnlyRootFilesystem: true when confirmed safe.
         resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
           limits:
             cpu: 500m
             memory: 256Mi
-        volumeMounts:
-        - name: db
-          mountPath: /data
+          requests:
+            cpu: 100m
+            memory: 128Mi
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8080
+            port: http
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /healthz
-            port: 8080
+            port: http
           initialDelaySeconds: 5
           periodSeconds: 10
+        volumeMounts:
+        - name: db
+          mountPath: /data
       volumes:
       - name: db
         persistentVolumeClaim:
           claimName: kscribe-db
 ---
-# Default DiagnosisPolicy for the operator namespace.
-# Override per-namespace by creating a DiagnosisPolicy in the target namespace.
+# Source: kscribe/templates/diagnosispolicy.yaml
 apiVersion: kscribe.amjadjibon.dev/v1alpha1
 kind: DiagnosisPolicy
 metadata:
   name: default
   namespace: kscribe-system
+  labels:
+    helm.sh/chart: kscribe-0.1.0
+    app.kubernetes.io/name: kscribe
+    app.kubernetes.io/instance: kscribe
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/managed-by: Helm
 spec:
   enabled: true
   eventReasons:
-  - BackOff
-  - OOMKilling
-  - Failed
-  - FailedScheduling
-  llmProvider: openai
-  llmModel: gpt-4o-mini
+    - BackOff
+    - OOMKilling
+    - Failed
+    - FailedScheduling
+  llmProvider: "openai"
+  llmModel: "gpt-4o-mini"
   maxIterations: 5
   redact: true

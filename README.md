@@ -18,26 +18,37 @@ kscribe sends enriched, redacted cluster context (event messages, pod metadata, 
 
 ## In-cluster deployment
 
-### 1. Apply the bundle
+The Helm chart (`charts/kscribe`) is the single source of truth for the install.
+`deploy/kscribe.yaml` is **generated** from it (`scripts/build-manifest.sh`) for
+users who prefer plain `kubectl` — do not edit it by hand. See
+[docs/manifests.md](docs/manifests.md) for the full pipeline and what to edit where.
+
+### Option A — Helm (recommended)
+
+```sh
+helm install kscribe ./charts/kscribe \
+  --namespace kscribe-system --create-namespace \
+  --set llm.apiKey=<your-openai-api-key>
+```
+
+See [charts/kscribe/README.md](charts/kscribe/README.md) for all values
+(image, resources, persistence, existing-secret, default policy).
+
+### Option B — plain kubectl
 
 ```sh
 kubectl apply -f deploy/kscribe.yaml
-```
-
-### 2. Create the LLM API-key Secret
-
-The Deployment reads `KSCRIBE_LLM_API_KEY` from a Secret named `kscribe-llm-secret` in the `kscribe-system` namespace. Create it before or immediately after applying the bundle:
-
-```sh
-kubectl create secret generic kscribe-llm-secret \
+# the bundle ships an empty kscribe-llm Secret; set your key into it:
+kubectl create secret generic kscribe-llm \
   --namespace kscribe-system \
-  --from-literal=api-key=<your-openai-api-key>
+  --from-literal=api-key=<your-openai-api-key> \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### 3. Verify
+### Verify
 
 ```sh
-kubectl rollout status deployment/kscribe-manager -n kscribe-system
+kubectl rollout status deployment/kscribe -n kscribe-system
 kubectl get kscribediagnoses -n kscribe-system
 ```
 

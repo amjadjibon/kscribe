@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   minikube:
-    name: build image and deploy in minikube
+    name: build image and deploy via Helm in minikube
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,39 +20,24 @@ jobs:
       - name: Start minikube
         uses: medyagh/setup-minikube@latest
 
+      - uses: azure/setup-helm@v4
+
       - name: Build image into minikube
         run: |
           eval "$(minikube docker-env)"
           docker build -t ghcr.io/amjadjibon/kscribe:latest .
 
-      # The Deployment references a Secret for the LLM API key; create it (and the
-      # namespace) before applying so the manager pod can start. A dummy value is
-      # fine — this smoke test only checks the operator boots and serves /healthz.
-      - name: Create namespace and dummy LLM secret
+      # Install the operator via the chart (the single source of truth). The chart
+      # creates the namespace, CRDs, RBAC, and the LLM Secret from --set llm.apiKey.
+      # A dummy key is fine — this smoke test only checks the operator boots and
+      # serves /healthz. image.pullPolicy defaults to IfNotPresent, so the locally
+      # built image is used instead of pulling from GHCR. --wait blocks until ready.
+      - name: helm install
         run: |
-          kubectl create namespace kscribe-system
-          kubectl create secret generic kscribe-llm-secret \
-            --namespace kscribe-system \
-            --from-literal=api-key=ci-dummy-key
-
-      - name: Apply manifests
-        run: |
-          # First apply creates the CRDs; the bundled DiagnosisPolicy CR may race
-          # ahead of CRD establishment, so wait then apply again (idempotent).
-          kubectl apply -f deploy/kscribe.yaml || true
-          kubectl wait --for=condition=established --timeout=60s \
-            crd/diagnosispolicies.kscribe.amjadjibon.dev \
-            crd/kscribediagnoses.kscribe.amjadjibon.dev
-          kubectl apply -f deploy/kscribe.yaml
-
-      - name: Use the locally built image
-        run: |
-          # Image is loaded in minikube's daemon; IfNotPresent stops a pull from GHCR.
-          kubectl -n kscribe-system patch deployment kscribe-manager --type=json \
-            -p '[{"op":"add","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
-
-      - name: Wait for rollout
-        run: kubectl -n kscribe-system rollout status deployment/kscribe-manager --timeout=180s
+          helm install kscribe ./charts/kscribe \
+            --namespace kscribe-system --create-namespace \
+            --set llm.apiKey=ci-dummy-key \
+            --wait --timeout 3m
 
       - name: Verify dashboard /healthz
         run: |
@@ -73,7 +58,8 @@ jobs:
       - name: Diagnostics on failure
         if: failure()
         run: |
+          helm -n kscribe-system status kscribe || true
           kubectl -n kscribe-system get pods,deploy,pvc,svc -o wide || true
-          kubectl -n kscribe-system describe deployment kscribe-manager || true
-          kubectl -n kscribe-system logs deployment/kscribe-manager --all-containers --tail=200 || true
+          kubectl -n kscribe-system describe deployment kscribe || true
+          kubectl -n kscribe-system logs deployment/kscribe --all-containers --tail=200 || true
           kubectl get events -n kscribe-system --sort-by=.lastTimestamp || true
