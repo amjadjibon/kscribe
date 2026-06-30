@@ -1,7 +1,7 @@
 ---
 date: 2026-06-30
 plan: docs/dashboard-ui/PLAN.md
-plan_version: 1.5
+plan_version: 1.6
 reviewer: Claude
 verdict: Ready
 ---
@@ -10,7 +10,7 @@ verdict: Ready
 
 ## Verdict
 
-**Ready** — the one blocking-tier finding (REVISE-001, the root-embed/`tools.go` package collision) has been resolved in plan v1.5 by moving the embed into `public/embed.go` (`package public`). Four non-blocking suggestions remain.
+**Ready** — all findings resolved in plan v1.6. REVISE-001 (root-embed/`tools.go` collision) fixed by moving the embed into `public/embed.go` (`package public`); the four suggestions are all applied: Phase 1 split into asset-serving (Phase 1) + design system (Phase 2), the `LIKE` typo corrected, requirements renumbered in order with REQ-009 reworded, and `go vet` added to every phase's completion criteria.
 
 ## Findings
 
@@ -64,6 +64,6 @@ The architectural decisions carry rationale rather than assertion: server-side M
 verdict: Ready
 block: 0
 revise: 0
-suggest: 4
+suggest: 0  # all applied in v1.6
 blocking_ids: []
 ```
