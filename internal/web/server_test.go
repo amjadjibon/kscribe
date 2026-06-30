@@ -172,6 +172,34 @@ func TestDetailNotFound(t *testing.T) {
 	}
 }
 
+func TestStaticAssets(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	cases := []struct {
+		path    string
+		wantCT  string
+	}{
+		{"/static/css/app.css", "text/css"},
+		{"/static/js/alpine.min.js", "text/javascript"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := http.Get(ts.URL + tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("want 200, got %d", resp.StatusCode)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, tc.wantCT) {
+				t.Fatalf("want Content-Type %q, got %q", tc.wantCT, ct)
+			}
+		})
+	}
+}
+
 func TestSSE(t *testing.T) {
 	ts, broker := newTestServer(t)
 	defer ts.Close()
