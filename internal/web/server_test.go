@@ -3,6 +3,7 @@ package web_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -394,6 +395,199 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// errStore is a fakeStore variant that injects errors for specific methods.
+type errStore struct {
+	fakeStore
+	failCountByPhase bool
+	failCount        bool
+	failList         bool
+}
+
+var errDB = errors.New("db error")
+
+func (e *errStore) CountIncidentsByPhase(ctx context.Context, f store.IncidentFilter) (map[string]int, error) {
+	if e.failCountByPhase {
+		return nil, errDB
+	}
+	return e.fakeStore.CountIncidentsByPhase(ctx, f)
+}
+
+func (e *errStore) CountIncidents(ctx context.Context, f store.IncidentFilter) (int, error) {
+	if e.failCount {
+		return 0, errDB
+	}
+	return e.fakeStore.CountIncidents(ctx, f)
+}
+
+func (e *errStore) ListIncidentsPage(ctx context.Context, f store.IncidentFilter, limit, offset int) ([]store.Incident, error) {
+	if e.failList {
+		return nil, errDB
+	}
+	return e.fakeStore.ListIncidentsPage(ctx, f, limit, offset)
+}
+
+// TestListStoreErrors covers the three error branches in the list handler (66.7% → ~100%).
+func TestListStoreErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		st   *errStore
+	}{
+		{"CountIncidentsByPhase", &errStore{fakeStore: *seedStore(), failCountByPhase: true}},
+		{"CountIncidents", &errStore{fakeStore: *seedStore(), failCount: true}},
+		{"ListIncidentsPage", &errStore{fakeStore: *seedStore(), failList: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := web.NewBroker()
+			srv := web.New(tc.st, broker)
+			ts := httptest.NewServer(srv.Handler())
+			defer ts.Close()
+
+			resp, err := http.Get(ts.URL + "/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Errorf("want 500, got %d", resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestStaticNotFound asserts that a missing static file returns 404 (not 500).
+func TestStaticNotFound(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/static/does-not-exist.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("want 404, got %d", resp.StatusCode)
+	}
+}
+
+// TestStaticSVGFavicon checks the favicon returns 200 with an SVG content-type.
+func TestStaticSVGFavicon(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/static/icons/favicon.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "svg") && !strings.Contains(ct, "xml") {
+		t.Errorf("want SVG/XML content-type, got %q", ct)
+	}
+}
+
+// TestListHTMLAssetsWired verifies GET / embeds /static/css/app.css and /static/js/alpine.min.js.
+func TestListHTMLAssetsWired(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	for _, asset := range []string{"/static/css/app.css", "/static/js/alpine.min.js"} {
+		if !strings.Contains(body, asset) {
+			t.Errorf("want %q referenced in page HTML", asset)
+		}
+	}
+}
+
+// TestEmptyStorePager verifies that an empty store renders a sane "no incidents" state
+// with 200 OK (no panic, no 500).
+func TestEmptyStorePager(t *testing.T) {
+	empty := &fakeStore{incidents: map[string]*store.IncidentDetail{}}
+	broker := web.NewBroker()
+	srv := web.New(empty, broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+	// Template shows empty-state when there are no incidents.
+	if !strings.Contains(body, "No incidents yet") {
+		t.Errorf("want empty-state text for empty store, body excerpt: %s", body[:min(500, len(body))])
+	}
+}
+
+// TestPageClamp verifies that page=0 is treated as page=1, and page beyond lastPage is clamped.
+func TestPageClamp(t *testing.T) {
+	ts, _ := newTestServer(t) // 3 incidents, pageSize=25, so lastPage=1
+	defer ts.Close()
+
+	for _, url := range []string{"/?page=0", "/?page=-5", "/?page=99"} {
+		t.Run(url, func(t *testing.T) {
+			resp, err := http.Get(ts.URL + url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("want 200, got %d", resp.StatusCode)
+			}
+			var sb strings.Builder
+			_, _ = io.Copy(&sb, resp.Body)
+			body := sb.String()
+			if !strings.Contains(body, "Page 1 of 1") {
+				t.Errorf("%s: want 'Page 1 of 1' after clamp, got excerpt: %s", url, body[:min(500, len(body))])
+			}
+		})
+	}
+}
+
+// TestStatCardIgnoresPhaseFilter checks that stat-card counts reflect all phases even
+// when a phase filter is active (CountIncidentsByPhase ignores filter.Phase). TASK-023.
+func TestStatCardIgnoresPhaseFilter(t *testing.T) {
+	ts, _ := newTestServer(t) // seedStore: Done=1, Partial=1, Failed=1
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/?phase=Failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Even though we filtered to Failed, stat cards must still label Done and Partial.
+	for _, label := range []string{"Done", "Partial", "Failed"} {
+		if !strings.Contains(body, "stat-card-label\">"+label+"<") {
+			t.Errorf("want stat-card label %q even with phase=Failed filter", label)
+		}
+	}
+	// Five stat-card-count spans (five phases always rendered).
+	if got := strings.Count(body, "stat-card-count"); got != 5 {
+		t.Errorf("want 5 stat-card-count spans, got %d", got)
+	}
 }
 
 // TestListFilterByPhase verifies that GET /?phase=Failed returns only Failed incidents.
