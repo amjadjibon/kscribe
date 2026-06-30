@@ -156,6 +156,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // ListIncidents returns incidents ordered by updated_at DESC, capped at limit rows.
 func (s *Store) ListIncidents(ctx context.Context, limit int) ([]Incident, error) {
+	return s.ListIncidentsPage(ctx, limit, 0)
+}
+
+// ListIncidentsPage returns a page of incidents ordered by updated_at DESC.
+func (s *Store) ListIncidentsPage(ctx context.Context, limit, offset int) ([]Incident, error) {
 	const q = `
 SELECT namespace, name, event_uid,
        involved_object_kind, involved_object_name, involved_object_namespace,
@@ -165,9 +170,9 @@ SELECT namespace, name, event_uid,
        created_at, updated_at
 FROM incidents
 ORDER BY updated_at DESC
-LIMIT ?`
+LIMIT ? OFFSET ?`
 
-	rows, err := s.db.QueryContext(ctx, q, limit)
+	rows, err := s.db.QueryContext(ctx, q, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +185,27 @@ LIMIT ?`
 			return nil, err
 		}
 		out = append(out, inc)
+	}
+	return out, rows.Err()
+}
+
+// CountIncidentsByPhase returns a count per phase across all incidents.
+func (s *Store) CountIncidentsByPhase(ctx context.Context) (map[string]int, error) {
+	const q = `SELECT phase, COUNT(*) FROM incidents GROUP BY phase`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var phase string
+		var count int
+		if err := rows.Scan(&phase, &count); err != nil {
+			return nil, err
+		}
+		out[phase] = count
 	}
 	return out, rows.Err()
 }

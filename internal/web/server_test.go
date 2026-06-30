@@ -3,6 +3,7 @@ package web_test
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,17 +18,53 @@ import (
 // fakeStore implements web.StoreReader in memory.
 type fakeStore struct {
 	incidents map[string]*store.IncidentDetail // key: namespace/name
+	// orderedKeys is optional; if set, ListIncidentsPage respects this order.
+	orderedKeys []string
+}
+
+func (f *fakeStore) orderedIncidents() []store.Incident {
+	keys := f.orderedKeys
+	if len(keys) == 0 {
+		keys = make([]string, 0, len(f.incidents))
+		for k := range f.incidents {
+			keys = append(keys, k)
+		}
+	}
+	out := make([]store.Incident, 0, len(keys))
+	for _, k := range keys {
+		if d, ok := f.incidents[k]; ok {
+			out = append(out, d.Incident)
+		}
+	}
+	return out
 }
 
 func (f *fakeStore) ListIncidents(_ context.Context, limit int) ([]store.Incident, error) {
-	out := make([]store.Incident, 0, len(f.incidents))
-	for _, d := range f.incidents {
-		out = append(out, d.Incident)
-		if len(out) >= limit {
-			break
-		}
+	all := f.orderedIncidents()
+	if limit < len(all) {
+		all = all[:limit]
 	}
-	return out, nil
+	return all, nil
+}
+
+func (f *fakeStore) ListIncidentsPage(_ context.Context, limit, offset int) ([]store.Incident, error) {
+	all := f.orderedIncidents()
+	if offset >= len(all) {
+		return nil, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
+func (f *fakeStore) CountIncidentsByPhase(_ context.Context) (map[string]int, error) {
+	counts := make(map[string]int)
+	for _, d := range f.incidents {
+		counts[d.Phase]++
+	}
+	return counts, nil
 }
 
 func (f *fakeStore) GetIncident(_ context.Context, namespace, name string) (*store.IncidentDetail, error) {
@@ -228,6 +265,99 @@ func TestListStatCards(t *testing.T) {
 			t.Errorf("want stat-card label %q in body", phase)
 		}
 	}
+}
+
+// seedLargeStore creates a store with 30 Done incidents so pagination kicks in.
+func seedLargeStore() *fakeStore {
+	now := time.Now().UTC()
+	f := &fakeStore{incidents: make(map[string]*store.IncidentDetail, 30)}
+	keys := make([]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		key := fmt.Sprintf("ns/incident-%02d", i)
+		keys = append(keys, key)
+		f.incidents[key] = &store.IncidentDetail{
+			Incident: store.Incident{
+				Namespace: "ns", Name: fmt.Sprintf("incident-%02d", i),
+				InvolvedObjectKind: "Pod", InvolvedObjectName: fmt.Sprintf("pod-%02d", i),
+				Reason: "Test", Phase: "Done",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		}
+	}
+	f.orderedKeys = keys
+	return f
+}
+
+// TestListPager asserts pagination controls appear with >25 incidents.
+func TestListPager(t *testing.T) {
+	broker := web.NewBroker()
+	srv := web.New(seedLargeStore(), broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Page 1: should show "Page 1 of 2" and Next link, no Prev link.
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	if !strings.Contains(body, "Page 1 of 2") {
+		t.Errorf("want 'Page 1 of 2' in body, got:\n%s", body[:min(500, len(body))])
+	}
+	if !strings.Contains(body, "?page=2") {
+		t.Error("want next page link (?page=2) in body")
+	}
+
+	// Page 2: should show "Page 2 of 2" and no Next link.
+	resp2, err := http.Get(ts.URL + "/?page=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var sb2 strings.Builder
+	_, _ = io.Copy(&sb2, resp2.Body)
+	body2 := sb2.String()
+
+	if !strings.Contains(body2, "Page 2 of 2") {
+		t.Errorf("want 'Page 2 of 2' in body2")
+	}
+	if strings.Contains(body2, "?page=3") {
+		t.Error("unexpected next page link on last page")
+	}
+}
+
+// TestListTotalsFromDB asserts stat card counts reflect all incidents, not just the visible page.
+func TestListTotalsFromDB(t *testing.T) {
+	broker := web.NewBroker()
+	srv := web.New(seedLargeStore(), broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// 30 Done incidents total — stat card must show 30, not 25 (the page size).
+	if !strings.Contains(body, ">30<") {
+		t.Errorf("want stat card showing total 30 Done incidents, body excerpt: %s",
+			body[:min(1000, len(body))])
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // TestDetailSanitization verifies that XSS payloads in LLM RCA fields are
