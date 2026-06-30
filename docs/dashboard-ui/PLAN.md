@@ -1,6 +1,6 @@
 ---
 goal: Dashboard UI refresh — themes, tabs, markdown RCA, better styling
-version: 1.2
+version: 1.3
 date_created: 2026-06-30
 last_updated: 2026-06-30
 owner: amjadjibon
@@ -12,7 +12,7 @@ tags: [feature, frontend]
 
 ![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
 
-Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished, dashboard-style UI: a design system with proper fonts and light/dark/system theming, summary stat cards on the incident list, a tabbed incident-detail view, and Markdown rendering of LLM-produced RCA fields (Summary, Root Cause, Remediation). The stack stays server-rendered templ + HTMX with CDN assets — no JS build step — and untrusted LLM Markdown is sanitized server-side.
+Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished, dashboard-style UI: a design system with proper fonts and light/dark/system theming, summary stat cards on the incident list, a tabbed incident-detail view, and Markdown rendering of LLM-produced RCA fields (Summary, Root Cause, Remediation). The stack stays server-rendered templ + HTMX, with Alpine.js (CDN) for client interactivity (theme, tabs, filter controls) — no JS build step — and untrusted LLM Markdown is sanitized server-side.
 
 ## 1. Requirements & Constraints
 
@@ -27,6 +27,7 @@ Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished,
 - **SEC-001**: RCA Markdown originates from the LLM and is untrusted; it must be sanitized (HTML-escaped/allowlisted) before being injected into the page. No raw `@templ.Raw` of unsanitized model output.
 - **SEC-002**: All filter/search inputs reach SQL; queries must be fully parameterized (placeholders + args), never string-concatenated values, and rendered filter values must be HTML-escaped in the form controls.
 - **CON-001**: Stay on templ + HTMX, server-rendered, CDN assets only — no npm/bundler/JS build step.
+- **CON-005**: All client-side interactivity (theme toggle, tabs, any show/hide or stateful UI behaviour) is implemented with Alpine.js loaded via CDN (`<script defer>`). No other JS framework, no inline ad-hoc vanilla handlers beyond the pre-paint theme snippet. Alpine and HTMX must coexist (Alpine for local UI state, HTMX/SSE for server interaction).
 - **CON-002**: CON-003 (repo-wide): no `encoding/json` in application code; use `github.com/bytedance/sonic` if JSON is needed (unlikely here).
 - **CON-003**: `make templ` output is committed and must be reproducible (rerun → no git diff).
 - **CON-004**: Existing `internal/web` tests must stay green; update assertions only where markup legitimately changes, and add tests for new behaviour.
@@ -39,10 +40,10 @@ Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished,
 
 **Goal**: Establish the visual foundation everything else builds on — fonts, CSS design tokens, light/dark/system theming with a persistent toggle, and a dashboard layout shell (header + content) in `Layout`.
 
-- [ ] TASK-001: In `internal/web/templates/layout.templ`, add CDN `<link>`s for Inter (UI) and JetBrains Mono (code) — use a privacy-friendly CDN (e.g. `https://fonts.bunny.net`) or Google Fonts; keep Pico as the base reset or replace its role with the new tokens.
+- [ ] TASK-001: In `internal/web/templates/layout.templ`, add CDN `<link>`s for Inter (UI) and JetBrains Mono (code) — use a privacy-friendly CDN (e.g. `https://fonts.bunny.net`) or Google Fonts; keep Pico as the base reset or replace its role with the new tokens. Add the Alpine.js CDN `<script defer>` (alpinejs@3) alongside the existing HTMX/SSE scripts.
 - [ ] TASK-002: Add a CSS design-token block (CSS custom properties) for colors, spacing, radius, shadows, and fonts, with a `[data-theme="dark"]` override set and a `@media (prefers-color-scheme: dark)` fallback so "system" works with no JS.
-- [ ] TASK-003: Restructure `Layout` into a dashboard shell: a top bar with the `kscribe` brand and a theme toggle control (Light / Dark / System), and a `<main>` content area styled with the tokens.
-- [ ] TASK-004: Add a small inline `<script>` that reads/writes the theme choice in `localStorage`, applies `data-theme` on `<html>`, and honours `system` via `matchMedia('(prefers-color-scheme: dark)')`. No external JS dependency.
+- [ ] TASK-003: Restructure `Layout` into a dashboard shell: a top bar with the `kscribe` brand and an Alpine-powered theme toggle control (Light / Dark / System), and a `<main>` content area styled with the tokens.
+- [ ] TASK-004: Implement theming with Alpine (CON-005): an `Alpine.store('theme')` (or `x-data` on `<html>`/body) that persists the choice in `localStorage`, resolves `system` via `matchMedia('(prefers-color-scheme: dark)')`, and applies `data-theme` to `<html>`. Keep ONE tiny inline pre-Alpine `<script>` in `<head>` that sets `data-theme` from `localStorage` before first paint to avoid a flash (FOUC); Alpine owns the toggle thereafter.
 - [ ] TASK-005: Replace the ad-hoc `.badge-*` inline styles with token-based phase badge styles that read correctly in both themes; keep the existing class names (`badge`, `badge-done`, …) so `PhaseBadge` and the SSE fragment keep working.
 - [ ] TASK-006: Run `make templ`; ensure `go build ./...` and `go test ./internal/web` pass (update only assertions broken by intentional layout changes).
 
@@ -54,20 +55,20 @@ Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished,
 ```
 You are a sub-agent implementing Phase 1 of dashboard-ui.
 
-Context: kscribe is a Go Kubernetes operator with a templ + HTMX web dashboard in internal/web. This phase builds the visual foundation: fonts, a CSS design-token system, light/dark/system theming with a persistent toggle, and a dashboard layout shell. Server-rendered only, CDN assets, NO JS build step.
+Context: kscribe is a Go Kubernetes operator with a templ + HTMX web dashboard in internal/web. This phase builds the visual foundation: fonts, a CSS design-token system, light/dark/system theming with a persistent toggle, and a dashboard layout shell. Server-rendered templ + HTMX, with Alpine.js (CDN) as the client interactivity layer. NO bundler/JS build step.
 
 Branch: dashboard-ui-phase-1  |  Base: main
 
 Tasks:
-- TASK-001: In internal/web/templates/layout.templ add CDN font links — Inter (UI) and JetBrains Mono (code) — via fonts.bunny.net or Google Fonts. Keep Pico as base reset (CDN link already present) or supersede it with your tokens; do not add a JS build step.
+- TASK-001: In internal/web/templates/layout.templ add CDN font links — Inter (UI) and JetBrains Mono (code) — via fonts.bunny.net or Google Fonts. Add the Alpine.js v3 CDN as <script defer> (e.g. https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js) alongside the existing HTMX + htmx-sse scripts. Keep Pico as base reset (CDN link already present) or supersede it with your tokens; do not add a JS build step.
 - TASK-002: Add a CSS design-token block (CSS custom properties: colors, spacing, radius, shadow, font families) with a [data-theme="dark"] override and a @media (prefers-color-scheme: dark) fallback so "system" works without JS.
-- TASK-003: Restructure the Layout templ into a dashboard shell: a top bar containing the "kscribe" brand link and a theme toggle (Light/Dark/System), plus a styled <main> content region. The Layout signature is `templ Layout(title string, content templ.Component)` — keep it compatible; the content component is rendered with @content.
-- TASK-004: Add a small inline <script> that persists the theme choice in localStorage, applies data-theme on <html>, and resolves "system" via matchMedia('(prefers-color-scheme: dark)'). Apply the stored theme before first paint to avoid a flash. No external JS lib.
+- TASK-003: Restructure the Layout templ into a dashboard shell: a top bar containing the "kscribe" brand link and an Alpine-powered theme toggle (Light/Dark/System), plus a styled <main> content region. The Layout signature is `templ Layout(title string, content templ.Component)` — keep it compatible; the content component is rendered with @content.
+- TASK-004: Implement theming with Alpine.js (CON-005): an Alpine.store('theme') or x-data that persists the choice in localStorage, resolves "system" via matchMedia('(prefers-color-scheme: dark)'), and sets data-theme on <html>. Keep exactly ONE tiny inline <script> in <head> (runs before Alpine) that applies the stored data-theme before first paint to prevent a flash; Alpine owns the toggle interaction after load. Alpine and HTMX must coexist on the page.
 - TASK-005: Replace the inline .badge-* styles with token-based phase badge styles that work in both themes. Keep the existing class names (badge, badge-pending, badge-diagnosing, badge-done, badge-partial, badge-failed) so templates/incidents.templ PhaseBadge and the SSE fragment keep rendering correctly.
 - TASK-006: Run `make templ` (regenerates *_templ.go). Keep go build and the internal/web tests green.
 
 Key files:
-- internal/web/templates/layout.templ — fonts, tokens, theme toggle + script, dashboard shell.
+- internal/web/templates/layout.templ — fonts, Alpine CDN, tokens, Alpine theme toggle + pre-paint snippet, dashboard shell.
 - internal/web/templates/layout_templ.go — generated by `make templ` (commit it).
 - internal/web/server_test.go — update only assertions broken by intentional changes (it checks 200s, Content-Type text/html, and that phase strings appear in the body — keep those true).
 
@@ -132,7 +133,7 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 - [ ] TASK-011: Add `github.com/yuin/goldmark` (Markdown → HTML) and `github.com/microcosm-cc/bluemonday` (HTML sanitizer) to `go.mod`; create `internal/web/markdown.go` exposing `RenderMarkdown(string) templ.Component` (or returning sanitized `template.HTML`) that converts Markdown and sanitizes the result with a strict allowlist policy.
 - [ ] TASK-012: In `internal/web/templates/incidents.templ`, render `Diagnosis.Summary`, `Diagnosis.RootCause`, and `Diagnosis.Remediation` through the Markdown renderer (sanitized) instead of plain text.
-- [ ] TASK-013: Add a tabbed layout to `IncidentDetail` — tabs such as Overview (event + LLM meta + live status), RCA (the Markdown diagnosis blocks), and Raw (key/value dump). Use a CSS-only tab mechanism (radio inputs / `:checked` or `:target`) so no JS is required; ensure the SSE `#live-status` hook and `sse-connect`/`sse-swap` attributes remain intact and on a tab visible by default.
+- [ ] TASK-013: Add a tabbed layout to `IncidentDetail` using Alpine (CON-005) — `x-data="{ tab: 'overview' }"`, tab buttons with `@click`/`:class`, and panels with `x-show`. Tabs such as Overview (event + LLM meta + live status), RCA (the Markdown diagnosis blocks), and Raw (key/value dump). Keep the SSE `#live-status` block and its `sse-connect`/`sse-swap` attributes in the DOM at all times (use `x-show`, which only toggles display, NOT `x-if`/`<template>`, which would remove it and break the live stream); the Overview/live tab is the default-selected one.
 - [ ] TASK-014: Style the diagnosis cards, confidence, and tabs with the Phase 1 tokens; ensure code blocks/inline code in rendered Markdown use the monospace font and a readable background in both themes.
 - [ ] TASK-015: Run `make templ`; add tests in `internal/web` for: (a) Markdown rendering (e.g. `**bold**` → `<strong>`), (b) sanitization (a `<script>`/`onerror` payload in RCA is stripped), and (c) the detail page still contains the SSE `sse-connect` attribute and the phase string.
 
@@ -151,7 +152,7 @@ Branch: dashboard-ui-phase-3  |  Base: dashboard-ui-phase-2
 Tasks:
 - TASK-011: Add deps github.com/yuin/goldmark and github.com/microcosm-cc/bluemonday (run `go get`). Create internal/web/markdown.go with a function that converts a Markdown string to HTML via goldmark, then sanitizes it with a bluemonday policy (start from UGCPolicy, allow code/pre/headings/lists/links with safe attributes), returning a value templ can render as raw HTML (e.g. templ.Component via templ.Raw of the sanitized string, or template.HTML). Do NOT use encoding/json (CON-003) — not needed here.
 - TASK-012: In internal/web/templates/incidents.templ render Diagnosis.Summary, Diagnosis.RootCause, Diagnosis.Remediation through the Markdown renderer (sanitized) instead of plain { text }.
-- TASK-013: Convert IncidentDetail into a tabbed view (e.g. Overview / RCA / Raw) using a CSS-only tab mechanism (radio inputs + :checked, or :target) — NO JavaScript. The existing SSE live-status block (div with hx-ext="sse", sse-connect="/incidents/{ns}/{name}/stream", sse-swap="message", id="live-status") MUST remain present, intact, and on a tab shown by default.
+- TASK-013: Convert IncidentDetail into a tabbed view (e.g. Overview / RCA / Raw) using Alpine.js (CON-005): x-data="{ tab: 'overview' }", tab buttons using @click="tab='...'" and :class for the active state, and panels using x-show="tab==='...'". The existing SSE live-status block (div with hx-ext="sse", sse-connect="/incidents/{ns}/{name}/stream", sse-swap="message", id="live-status") MUST remain present and intact in the DOM at all times — use x-show (display toggle), NOT x-if/<template> (which removes it from the DOM and would kill the SSE connection). The Overview tab containing live status is selected by default.
 - TASK-014: Style diagnosis cards, confidence, and tabs with the Phase 1 design tokens; rendered Markdown code/pre must use the monospace font and a readable background in both light and dark themes.
 - TASK-015: Run `make templ`. Add internal/web tests: (a) RenderMarkdown turns **bold** into <strong>; (b) a script/onerror payload embedded in an RCA field is stripped from the rendered detail page (sanitization); (c) the detail page still contains the sse-connect attribute and the phase string.
 
@@ -225,7 +226,7 @@ Do NOT push, open PRs, or modify PLAN.md.
 - [ ] TASK-020: In `internal/store/sqlite.go` define an `IncidentFilter` struct (`Phase`, `Namespace`, `Reason`, `Query string`) and evolve the Phase 4 reads to honour it: `ListIncidentsPage(ctx, filter, limit, offset)`, `CountIncidents(ctx, filter) (int, error)` (total matching, for the pager), and `CountIncidentsByPhase(ctx, filter)` — build the `WHERE` clause dynamically from the non-empty filter fields using parameter placeholders and an args slice (SEC-002), with `Query` matched via `LIKE %?%` across `name`, `message`, and `reason`.
 - [ ] TASK-021: For the stat cards, apply every filter field EXCEPT `Phase` when computing `CountIncidentsByPhase`, so the per-phase cards stay populated and act as phase toggles even while a phase is selected.
 - [ ] TASK-022: In `internal/web/server.go`, parse `?phase=`, `?namespace=`, `?reason=`, `?q=` (plus the Phase 4 `?page=`), build the `store.IncidentFilter`, fetch the filtered page + filtered total + per-phase counts, and pass the active filter values to the template. Reset to page 1 when filters change.
-- [ ] TASK-023: In `internal/web/templates/incidents.templ`, add a filter bar — a GET form with a search input (`q`), a phase `<select>`, and namespace/reason inputs (prefilled with current values, HTML-escaped) and a Clear link; make the stat cards clickable phase filters (`/?phase=<P>&...keep other filters`); and ensure the pagination links carry the current filter query string.
+- [ ] TASK-023: In `internal/web/templates/incidents.templ`, add a filter bar — a GET form with a search input (`q`), a phase `<select>`, and namespace/reason inputs (prefilled with current values, HTML-escaped) and a Clear link; make the stat cards clickable phase filters (`/?phase=<P>&...keep other filters`); and ensure the pagination links carry the current filter query string. Any client interactivity in the bar (auto-submit on phase change, a Clear button, toggling an advanced-filters panel) uses Alpine (CON-005); the actual filtering stays a server-side GET so the URL remains shareable.
 - [ ] TASK-024: Run `make templ`; add `internal/store` tests (filter by phase, by namespace, by free-text `q`; combined filter + paging; filtered counts) and an `internal/web` test (applying `?phase=Failed` returns only Failed rows; pagination + stat-card links preserve filters).
 
 **Completion criteria**: `go test ./internal/store ./internal/web` passes (filter, free-text, filtered counts, filter-preserving pager); `make templ` reproducible; `go build ./...` and `go vet ./...` pass; `/?phase=Failed&q=image` narrows the list and the pager/stat links keep the filter.
@@ -244,7 +245,7 @@ Tasks:
 - TASK-020: In internal/store/sqlite.go define `type IncidentFilter struct { Phase, Namespace, Reason, Query string }` and update the Phase 4 reads to take it: `ListIncidentsPage(ctx, filter IncidentFilter, limit, offset int)`, `CountIncidents(ctx, filter IncidentFilter) (int, error)`, `CountIncidentsByPhase(ctx, filter IncidentFilter) (map[string]int, error)`. Build the WHERE clause from non-empty fields using ? placeholders and an []any args slice — never interpolate values (SEC-002). Match Query with LIKE against name, message, and reason (e.g. `(name LIKE ? OR message LIKE ? OR reason LIKE ?)` with `%q%`). Keep filterable columns: phase, namespace, reason, message, name (all exist in the incidents table; phase and namespace/name are indexed).
 - TASK-021: When computing CountIncidentsByPhase, apply all filter fields EXCEPT Phase, so the per-phase stat cards stay populated and usable as phase toggles while a phase is selected.
 - TASK-022: In internal/web/server.go parse query params phase, namespace, reason, q (plus page from Phase 4), build store.IncidentFilter, fetch the filtered page + CountIncidents (for last-page math) + CountIncidentsByPhase, and pass current filter values to the template. Keep route/200/Content-Type unchanged.
-- TASK-023: In internal/web/templates/incidents.templ add a filter bar: a GET <form> with a text search (name="q"), a phase <select> (options: all + each phase), and namespace/reason text inputs, all prefilled with the current (HTML-escaped) values, plus a Clear link back to /. Make the stat cards anchor to /?phase=<P> while preserving the other active filters. Make the Phase 4 pagination Prev/Next links include the current filter query string. Style with Phase 1 tokens.
+- TASK-023: In internal/web/templates/incidents.templ add a filter bar: a GET <form> with a text search (name="q"), a phase <select> (options: all + each phase), and namespace/reason text inputs, all prefilled with the current (HTML-escaped) values, plus a Clear link back to /. Make the stat cards anchor to /?phase=<P> while preserving the other active filters. Make the Phase 4 pagination Prev/Next links include the current filter query string. Style with Phase 1 tokens. Any client interactivity (auto-submit the form when the phase select changes, a Clear button, an advanced-filters toggle) MUST use Alpine.js (CON-005), not ad-hoc vanilla JS; the form still submits as a normal GET so filtering stays server-side and URLs stay shareable.
 - TASK-024: Run `make templ`. Add internal/store tests: filter by phase, by namespace, by free-text q (matches message and name), combined filter+paging, and filtered counts. Add an internal/web test: GET /?phase=Failed returns only Failed incidents, and the rendered pager + stat-card links carry the active filters.
 
 Key files:
@@ -280,11 +281,13 @@ Do NOT push, open PRs, or modify PLAN.md.
 ## 4. Risks & Assumptions
 
 - **RISK-001**: Unsanitized LLM Markdown could inject scripts (XSS) — mitigation: mandatory bluemonday sanitization at the single `RenderMarkdown` chokepoint, with a sanitization test (SEC-001).
-- **RISK-002**: CSS-only tabs can be finicky for accessibility/anchor behaviour — mitigation: keep a simple radio-input pattern, ensure the SSE tab is default-selected so live updates are visible without interaction; acceptable for MVP.
-- **RISK-003**: Theme flash-on-load (FOUC) if `data-theme` is applied after paint — mitigation: apply the stored theme in an inline head script before body render.
+- **RISK-002**: Alpine `x-if`/`<template>` for tab panels would remove the SSE block from the DOM and silently break live updates — mitigation: tabs use `x-show` (display toggle only); the live/Overview tab is default-selected; a test asserts the `sse-connect` attribute is present in the rendered detail page (REQ-006).
+- **RISK-003**: Theme flash-on-load (FOUC) — Alpine initializes after first paint, so relying on it alone would flash the wrong theme — mitigation: one tiny inline head `<script>` applies `data-theme` from `localStorage` before paint; Alpine takes over the toggle after load.
+- **RISK-006**: Alpine and HTMX can clash if both try to own the same DOM subtree (HTMX swaps can drop Alpine state) — mitigation: scope Alpine `x-data` to containers HTMX does not swap; HTMX/SSE only swaps the small `#live-status` fragment, which carries no Alpine state.
 - **RISK-004**: Markup changes break existing `internal/web` assertions — mitigation: existing tests assert phase strings, status codes, Content-Type, and SSE framing, all preserved; update only where markup legitimately moves.
 - **ASSUMPTION-001**: RCA fields (`Summary`, `RootCause`, `Remediation`) frequently contain Markdown-ish text from the LLM, so Markdown rendering is worthwhile (observed: models return fenced code blocks and lists).
-- **ASSUMPTION-002**: Server-side Markdown (goldmark + bluemonday) is preferred over client-side JS rendering — it is testable, works without client JS, and keeps untrusted HTML sanitization on the server. Two small pure-Go deps are acceptable here.
+- **ASSUMPTION-002**: Server-side Markdown (goldmark + bluemonday) is preferred over client-side JS rendering — it is testable, works without client JS, and keeps untrusted HTML sanitization on the server. Two small pure-Go deps are acceptable here. (Alpine handles UI interactivity; content rendering/sanitization stays server-side.)
+- **ASSUMPTION-007**: Alpine.js v3 via CDN (`<script defer>`) is the client interactivity layer for all stateful UI (theme, tabs, filter-bar niceties) per CON-005; it adds no build step and coexists with HTMX. Actual data operations (filtering, pagination) remain server-side GET requests so URLs stay shareable and testable.
 - **ASSUMPTION-003**: CDN font/asset loading is acceptable (consistent with the existing Pico/HTMX CDN usage); no self-hosting/offline requirement for the dashboard in this iteration.
 - **ASSUMPTION-004**: Phase branches use the hyphenated form `dashboard-ui-phase-N` (not `dashboard-ui/phase-N`) to avoid a git ref D/F conflict with the `dashboard-ui` plan branch.
 - **ASSUMPTION-005**: Offset-based pagination with a fixed 25-row page size is sufficient for the dashboard; cursor/keyset pagination is deferred (incident counts are modest and `updated_at DESC` ordering tolerates offset paging for an MVP). Phase 2's stat cards are reworked in Phase 4 to use DB-side phase-count totals so they stay correct once only one page is loaded.
