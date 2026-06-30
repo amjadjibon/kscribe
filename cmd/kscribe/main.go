@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -88,6 +89,11 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				"resync_period", cfg.ResyncPeriod.String(),
 				"event_reason_allowlist", cfg.EventReasonAllowlist,
 			)
+
+			// Route controller-runtime's logr logging through slog so its internal
+			// logs (reconcile errors, requeues, leader election) are visible and
+			// to silence the "log.SetLogger(...) was never called" warning.
+			ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
 
 			// Build rest.Config — prefer explicit kubeconfig file over in-cluster auto-detect.
 			restCfg, cfgErr := ctrl.GetConfig()
