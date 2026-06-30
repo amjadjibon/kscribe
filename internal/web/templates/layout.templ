@@ -7,23 +7,50 @@ templ Layout(title string, content templ.Component) {
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<title>{ title }</title>
-			<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
-			<script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
-			<script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js" crossorigin="anonymous"></script>
-			<style>
-				.badge { display:inline-block; padding:.2em .5em; border-radius:4px; font-size:.8em; font-weight:600; }
-				.badge-pending    { background:#e0e0e0; color:#555; }
-				.badge-diagnosing { background:#bbdefb; color:#1565c0; }
-				.badge-done       { background:#c8e6c9; color:#1b5e20; }
-				.badge-partial    { background:#fff9c4; color:#f57f17; }
-				.badge-failed     { background:#ffcdd2; color:#b71c1c; }
-			</style>
+			<script>
+				// ponytail: pre-paint FOUC prevention + Alpine store registration
+				(function(){
+					var t = localStorage.getItem('kscribe-theme') || 'system';
+					var mq = window.matchMedia('(prefers-color-scheme: dark)');
+					function resolve(m) { return m === 'system' ? (mq.matches ? 'dark' : 'light') : m; }
+					document.documentElement.setAttribute('data-theme', resolve(t));
+				})();
+				var _kMQ = window.matchMedia('(prefers-color-scheme: dark)');
+				function _kApply(m) {
+					document.documentElement.setAttribute('data-theme', m === 'system' ? (_kMQ.matches ? 'dark' : 'light') : m);
+				}
+				document.addEventListener('alpine:init', function() {
+					Alpine.store('theme', {
+						mode: localStorage.getItem('kscribe-theme') || 'system',
+						get label() {
+							return ({light: 'Light', dark: 'Dark', system: 'System'})[this.mode] || 'System';
+						},
+						set: function(m) { this.mode = m; localStorage.setItem('kscribe-theme', m); _kApply(m); },
+						cycle: function() {
+							var ms = ['light', 'dark', 'system'];
+							this.set(ms[(ms.indexOf(this.mode) + 1) % 3]);
+						}
+					});
+					_kMQ.addEventListener('change', function() {
+						if (Alpine.store('theme').mode === 'system') _kApply('system');
+					});
+				});
+			</script>
+			<link rel="preconnect" href="https://fonts.bunny.net"/>
+			<link href="https://fonts.bunny.net/css?family=inter:400,500,600|jetbrains-mono:400,500&display=swap" rel="stylesheet"/>
+			<link rel="stylesheet" href="/static/css/app.css"/>
+			<link rel="icon" href="/static/icons/favicon.svg" type="image/svg+xml"/>
+			<script defer src="/static/js/alpine.min.js"></script>
+			<script src="/static/js/htmx.min.js"></script>
+			<script src="/static/js/htmx-sse.min.js"></script>
 		</head>
 		<body>
-			<main class="container">
-				<nav>
-					<a href="/"><strong>kscribe</strong></a>
-				</nav>
+			<header class="topbar">
+				<a href="/" class="topbar-brand">kscribe</a>
+				<span class="topbar-spacer"></span>
+				<button class="theme-toggle" x-data x-on:click="$store.theme.cycle()" x-text="$store.theme.label">System</button>
+			</header>
+			<main class="main-content">
 				@content
 			</main>
 		</body>
