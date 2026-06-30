@@ -20,8 +20,9 @@ const pageSize = 25
 // StoreReader is the subset of store.Store the web server needs.
 type StoreReader interface {
 	ListIncidents(ctx context.Context, limit int) ([]store.Incident, error)
-	ListIncidentsPage(ctx context.Context, limit, offset int) ([]store.Incident, error)
-	CountIncidentsByPhase(ctx context.Context) (map[string]int, error)
+	ListIncidentsPage(ctx context.Context, filter store.IncidentFilter, limit, offset int) ([]store.Incident, error)
+	CountIncidents(ctx context.Context, filter store.IncidentFilter) (int, error)
+	CountIncidentsByPhase(ctx context.Context, filter store.IncidentFilter) (map[string]int, error)
 	GetIncident(ctx context.Context, namespace, name string) (*store.IncidentDetail, error)
 }
 
@@ -46,7 +47,7 @@ func (s *Server) Handler() http.Handler {
 	// ponytail: inline cache header wrapper — no middleware stack needed for a single route
 	static := http.FileServer(http.FS(public.FS))
 	r.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		static.ServeHTTP(w, r)
 	})))
 	return r
@@ -58,20 +59,28 @@ func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
 	if page < 1 {
 		page = 1
 	}
+	filter := store.IncidentFilter{
+		Phase:     q.Get("phase"),
+		Namespace: q.Get("namespace"),
+		Reason:    q.Get("reason"),
+		Query:     q.Get("q"),
+	}
 
-	totals, err := s.store.CountIncidentsByPhase(r.Context())
+	totals, err := s.store.CountIncidentsByPhase(r.Context(), filter)
 	if err != nil {
 		http.Error(w, "failed to count incidents", http.StatusInternalServerError)
 		return
 	}
 
-	total := 0
-	for _, n := range totals {
-		total += n
+	total, err := s.store.CountIncidents(r.Context(), filter)
+	if err != nil {
+		http.Error(w, "failed to count incidents", http.StatusInternalServerError)
+		return
 	}
 	lastPage := (total + pageSize - 1) / pageSize
 	if lastPage < 1 {
@@ -81,14 +90,14 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		page = lastPage
 	}
 
-	incidents, err := s.store.ListIncidentsPage(r.Context(), pageSize, (page-1)*pageSize)
+	incidents, err := s.store.ListIncidentsPage(r.Context(), filter, pageSize, (page-1)*pageSize)
 	if err != nil {
 		http.Error(w, "failed to list incidents", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = templates.Layout("kscribe — Incidents", templates.IncidentList(incidents, totals, page, lastPage)).Render(r.Context(), w)
+	_ = templates.Layout("kscribe — Incidents", templates.IncidentList(incidents, totals, page, lastPage, filter)).Render(r.Context(), w)
 }
 
 func (s *Server) detail(w http.ResponseWriter, r *http.Request) {

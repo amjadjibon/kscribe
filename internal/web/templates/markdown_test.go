@@ -35,3 +35,25 @@ func TestRenderMarkdown_Sanitize(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderMarkdown_JavascriptLink asserts that javascript: href is stripped. SEC-001.
+func TestRenderMarkdown_JavascriptLink(t *testing.T) {
+	comp := templates.RenderMarkdown("[click](javascript:alert(1))")
+	var buf bytes.Buffer
+	_ = comp.Render(nil, &buf) //nolint:staticcheck
+	out := buf.String()
+	if strings.Contains(out, "javascript:") {
+		t.Errorf("SEC-001: javascript: href survived sanitization: %s", out)
+	}
+}
+
+// TestRenderMarkdown_Iframe asserts that <iframe> tags are removed. SEC-001.
+func TestRenderMarkdown_Iframe(t *testing.T) {
+	comp := templates.RenderMarkdown(`<iframe src="https://evil.example.com"></iframe>`)
+	var buf bytes.Buffer
+	_ = comp.Render(nil, &buf) //nolint:staticcheck
+	out := buf.String()
+	if strings.Contains(out, "<iframe") {
+		t.Errorf("SEC-001: <iframe> tag survived sanitization: %s", out)
+	}
+}

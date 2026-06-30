@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -45,6 +46,43 @@ type Diagnosis struct {
 	Remediation string
 	Confidence  float64
 	CreatedAt   time.Time
+}
+
+// IncidentFilter holds optional filter criteria for incident list queries. SEC-002: all
+// fields are passed as bound parameters — never interpolated into SQL.
+type IncidentFilter struct {
+	Phase     string
+	Namespace string
+	Reason    string
+	Query     string // free-text: LIKE match against name, message, reason
+}
+
+// buildWhere builds a parameterized WHERE clause from f.
+// If includePhase is false, f.Phase is ignored (TASK-023: per-phase counts ignore phase filter).
+func buildWhere(f IncidentFilter, includePhase bool) (string, []any) {
+	var conds []string
+	var args []any
+	if includePhase && f.Phase != "" {
+		conds = append(conds, "phase = ?")
+		args = append(args, f.Phase)
+	}
+	if f.Namespace != "" {
+		conds = append(conds, "namespace = ?")
+		args = append(args, f.Namespace)
+	}
+	if f.Reason != "" {
+		conds = append(conds, "reason = ?")
+		args = append(args, f.Reason)
+	}
+	if f.Query != "" {
+		conds = append(conds, "(name LIKE ? OR message LIKE ? OR reason LIKE ?)")
+		w := "%" + f.Query + "%"
+		args = append(args, w, w, w)
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
 // IncidentDetail bundles an Incident with its Diagnoses.
@@ -156,23 +194,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // ListIncidents returns incidents ordered by updated_at DESC, capped at limit rows.
 func (s *Store) ListIncidents(ctx context.Context, limit int) ([]Incident, error) {
-	return s.ListIncidentsPage(ctx, limit, 0)
+	return s.ListIncidentsPage(ctx, IncidentFilter{}, limit, 0)
 }
 
-// ListIncidentsPage returns a page of incidents ordered by updated_at DESC.
-func (s *Store) ListIncidentsPage(ctx context.Context, limit, offset int) ([]Incident, error) {
-	const q = `
-SELECT namespace, name, event_uid,
+// ListIncidentsPage returns a filtered page of incidents ordered by updated_at DESC.
+func (s *Store) ListIncidentsPage(ctx context.Context, filter IncidentFilter, limit, offset int) ([]Incident, error) {
+	where, args := buildWhere(filter, true)
+	q := `SELECT namespace, name, event_uid,
        involved_object_kind, involved_object_name, involved_object_namespace,
        reason, message, phase,
        started_at, completed_at,
        llm_provider, llm_model, tokens_used, prompt_redacted, persisted,
        created_at, updated_at
-FROM incidents
-ORDER BY updated_at DESC
-LIMIT ? OFFSET ?`
+FROM incidents` + where + ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 
-	rows, err := s.db.QueryContext(ctx, q, limit, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,10 +226,21 @@ LIMIT ? OFFSET ?`
 	return out, rows.Err()
 }
 
-// CountIncidentsByPhase returns a count per phase across all incidents.
-func (s *Store) CountIncidentsByPhase(ctx context.Context) (map[string]int, error) {
-	const q = `SELECT phase, COUNT(*) FROM incidents GROUP BY phase`
-	rows, err := s.db.QueryContext(ctx, q)
+// CountIncidents returns the total number of incidents matching filter.
+func (s *Store) CountIncidents(ctx context.Context, filter IncidentFilter) (int, error) {
+	where, args := buildWhere(filter, true)
+	q := `SELECT COUNT(*) FROM incidents` + where
+	var count int
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&count)
+	return count, err
+}
+
+// CountIncidentsByPhase returns a count per phase, applying all filter fields EXCEPT Phase.
+// TASK-023: ignoring filter.Phase keeps stat cards populated as phase toggles.
+func (s *Store) CountIncidentsByPhase(ctx context.Context, filter IncidentFilter) (map[string]int, error) {
+	where, args := buildWhere(filter, false) // false = skip filter.Phase
+	q := `SELECT phase, COUNT(*) FROM incidents` + where + ` GROUP BY phase`
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

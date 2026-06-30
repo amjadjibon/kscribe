@@ -2,6 +2,7 @@ package templates
 
 import (
 	"fmt"
+	"net/url"
 	"github.com/amjadjibon/kscribe/internal/store"
 )
 
@@ -10,24 +11,48 @@ templ PhaseBadge(phase string) {
 	<span class={ "badge", phaseBadgeClass(phase) }>{ phase }</span>
 }
 
-// StatCards renders a row of per-phase count cards using DB-aggregated totals.
-templ StatCards(totals map[string]int) {
+// StatCards renders a row of per-phase count cards. Each card links to /?phase=P
+// while preserving the other active filter fields (TASK-025).
+templ StatCards(totals map[string]int, filter store.IncidentFilter) {
 	<div class="stat-cards">
 		for _, p := range []string{"Done", "Diagnosing", "Failed", "Partial", "Pending"} {
-			<div class={ "stat-card", phaseCardClass(p) }>
+			<a href={ templ.SafeURL(phaseURL(p, filter)) } class={ "stat-card", phaseCardClass(p), statCardActiveClass(p, filter.Phase) }>
 				<span class="stat-card-label">{ p }</span>
 				<span class="stat-card-count">{ fmt.Sprintf("%d", totals[p]) }</span>
-			</div>
+			</a>
 		}
 	</div>
 }
 
-// IncidentList renders the dashboard list page with pagination controls.
-templ IncidentList(incidents []store.Incident, totals map[string]int, page, lastPage int) {
+// IncidentList renders the dashboard list page with filter bar, stat cards, table, and pager.
+templ IncidentList(incidents []store.Incident, totals map[string]int, page, lastPage int, filter store.IncidentFilter) {
 	<div class="page-header">
 		<h2>Incidents</h2>
 	</div>
-	@StatCards(totals)
+	<!-- Filter bar: GET form so all state lives in the URL (shareable, no JS required). -->
+	<!-- CON-005: Alpine x-data on form so @change auto-submits the phase select. -->
+	<form action="/" method="GET" class="filter-bar" x-data>
+		<input
+			type="search"
+			name="q"
+			value={ filter.Query }
+			placeholder="Search name, message, reason…"
+			class="filter-input filter-input-wide"
+		/>
+		<select name="phase" @change="$el.form.submit()" class="filter-select">
+			<option value="">All phases</option>
+			for _, p := range []string{"Done", "Diagnosing", "Failed", "Partial", "Pending"} {
+				<option value={ p } selected?={ filter.Phase == p }>{ p }</option>
+			}
+		</select>
+		<input type="text" name="namespace" value={ filter.Namespace } placeholder="Namespace" class="filter-input"/>
+		<input type="text" name="reason" value={ filter.Reason } placeholder="Reason" class="filter-input"/>
+		<button type="submit" class="filter-submit">Search</button>
+		if filter != (store.IncidentFilter{}) {
+			<a href="/" class="filter-clear">Clear</a>
+		}
+	</form>
+	@StatCards(totals, filter)
 	if len(incidents) == 0 && page == 1 {
 		<div class="empty-state">
 			<p>No incidents yet.</p>
@@ -63,13 +88,13 @@ templ IncidentList(incidents []store.Incident, totals map[string]int, page, last
 			if page <= 1 {
 				<span class="pager-btn disabled">Prev</span>
 			} else {
-				<a class="pager-btn" href={ templ.SafeURL(fmt.Sprintf("/?page=%d", page-1)) }>Prev</a>
+				<a class="pager-btn" href={ templ.SafeURL(pageURL(page-1, filter)) }>Prev</a>
 			}
 			<span class="pager-label">Page { fmt.Sprintf("%d", page) } of { fmt.Sprintf("%d", lastPage) }</span>
 			if page >= lastPage {
 				<span class="pager-btn disabled">Next</span>
 			} else {
-				<a class="pager-btn" href={ templ.SafeURL(fmt.Sprintf("/?page=%d", page+1)) }>Next</a>
+				<a class="pager-btn" href={ templ.SafeURL(pageURL(page+1, filter)) }>Next</a>
 			}
 		</div>
 	}
@@ -212,6 +237,52 @@ templ DiagnosisBlock(diag store.Diagnosis) {
 	</article>
 }
 
+// pageURL builds a pager href preserving all active filter fields. Page 1 is omitted from the URL.
+func pageURL(page int, f store.IncidentFilter) string {
+	v := url.Values{}
+	if page > 1 {
+		v.Set("page", fmt.Sprintf("%d", page))
+	}
+	if f.Phase != "" {
+		v.Set("phase", f.Phase)
+	}
+	if f.Namespace != "" {
+		v.Set("namespace", f.Namespace)
+	}
+	if f.Reason != "" {
+		v.Set("reason", f.Reason)
+	}
+	if f.Query != "" {
+		v.Set("q", f.Query)
+	}
+	if s := v.Encode(); s != "" {
+		return "/?" + s
+	}
+	return "/"
+}
+
+// phaseURL builds a stat-card href for phase p while preserving namespace/reason/q.
+// Phase is reset to 1 when switching; current page is intentionally dropped.
+func phaseURL(phase string, f store.IncidentFilter) string {
+	v := url.Values{}
+	if phase != "" {
+		v.Set("phase", phase)
+	}
+	if f.Namespace != "" {
+		v.Set("namespace", f.Namespace)
+	}
+	if f.Reason != "" {
+		v.Set("reason", f.Reason)
+	}
+	if f.Query != "" {
+		v.Set("q", f.Query)
+	}
+	if s := v.Encode(); s != "" {
+		return "/?" + s
+	}
+	return "/"
+}
+
 // phaseBadgeClass maps a phase string to its CSS class.
 func phaseBadgeClass(phase string) string {
 	switch phase {
@@ -244,3 +315,10 @@ func phaseCardClass(phase string) string {
 	}
 }
 
+// statCardActiveClass returns the active CSS class when the card's phase matches the current filter.
+func statCardActiveClass(phase, activePhase string) string {
+	if phase == activePhase {
+		return "stat-card-active"
+	}
+	return ""
+}

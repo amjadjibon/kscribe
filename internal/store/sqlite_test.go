@@ -210,7 +210,7 @@ func TestListIncidentsPage(t *testing.T) {
 	}
 
 	// Page 1 (25 items): most recent first, so inc-29..inc-05.
-	page1, err := s.ListIncidentsPage(ctx, 25, 0)
+	page1, err := s.ListIncidentsPage(ctx, IncidentFilter{}, 25, 0)
 	if err != nil {
 		t.Fatalf("page1: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestListIncidentsPage(t *testing.T) {
 	}
 
 	// Page 2 (5 items): inc-04..inc-00.
-	page2, err := s.ListIncidentsPage(ctx, 25, 25)
+	page2, err := s.ListIncidentsPage(ctx, IncidentFilter{}, 25, 25)
 	if err != nil {
 		t.Fatalf("page2: %v", err)
 	}
@@ -234,12 +234,219 @@ func TestListIncidentsPage(t *testing.T) {
 	}
 
 	// Offset past end returns empty.
-	empty, err := s.ListIncidentsPage(ctx, 25, 100)
+	empty, err := s.ListIncidentsPage(ctx, IncidentFilter{}, 25, 100)
 	if err != nil {
 		t.Fatalf("past-end: %v", err)
 	}
 	if len(empty) != 0 {
 		t.Errorf("past-end len = %d, want 0", len(empty))
+	}
+}
+
+// TestFilterByPhase verifies that ListIncidentsPage and CountIncidents respect filter.Phase.
+func TestFilterByPhase(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, inc := range []Incident{
+		{Namespace: "ns", Name: "a", Phase: "Done"},
+		{Namespace: "ns", Name: "b", Phase: "Failed"},
+		{Namespace: "ns", Name: "c", Phase: "Failed"},
+	} {
+		if err := s.UpsertIncident(ctx, inc); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+
+	f := IncidentFilter{Phase: "Failed"}
+	rows, err := s.ListIncidentsPage(ctx, f, 10, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("want 2 Failed, got %d", len(rows))
+	}
+	for _, r := range rows {
+		if r.Phase != "Failed" {
+			t.Errorf("unexpected phase %q", r.Phase)
+		}
+	}
+
+	count, err := s.CountIncidents(ctx, f)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("CountIncidents want 2, got %d", count)
+	}
+}
+
+// TestFilterByNamespace verifies namespace filtering.
+func TestFilterByNamespace(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, inc := range []Incident{
+		{Namespace: "prod", Name: "x", Phase: "Done"},
+		{Namespace: "staging", Name: "y", Phase: "Done"},
+	} {
+		if err := s.UpsertIncident(ctx, inc); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+
+	rows, err := s.ListIncidentsPage(ctx, IncidentFilter{Namespace: "prod"}, 10, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Namespace != "prod" {
+		t.Errorf("want 1 prod incident, got %+v", rows)
+	}
+}
+
+// TestFilterByQuery verifies free-text search against name, message, and reason.
+func TestFilterByQuery(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, inc := range []Incident{
+		{Namespace: "ns", Name: "oom-killer", Phase: "Done", Message: "container killed", Reason: "OOMKilled"},
+		{Namespace: "ns", Name: "crash-loop", Phase: "Done", Message: "back-off restarting", Reason: "BackOff"},
+		{Namespace: "ns", Name: "image-pull", Phase: "Failed", Message: "failed to pull image", Reason: "ImagePullBackOff"},
+	} {
+		if err := s.UpsertIncident(ctx, inc); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+
+	// Matches name "oom-killer" and reason "OOMKilled".
+	rows, err := s.ListIncidentsPage(ctx, IncidentFilter{Query: "oom"}, 10, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("query 'oom': want 1, got %d: %+v", len(rows), rows)
+	}
+
+	// Matches message "failed to pull image" and name "image-pull".
+	rows2, err := s.ListIncidentsPage(ctx, IncidentFilter{Query: "image"}, 10, 0)
+	if err != nil {
+		t.Fatalf("list2: %v", err)
+	}
+	if len(rows2) != 1 {
+		t.Errorf("query 'image': want 1, got %d", len(rows2))
+	}
+}
+
+// TestFilterCombinedAndPaging verifies that phase + query filters compose correctly with paging.
+func TestFilterCombinedAndPaging(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 10; i++ {
+		ts := base.Add(time.Duration(i) * time.Second)
+		if err := s.UpsertIncident(ctx, Incident{
+			Namespace: "ns", Name: fmt.Sprintf("pod-%02d", i),
+			Phase: "Failed", Message: "image pull failed", UpdatedAt: ts,
+		}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+	// Add a non-matching row.
+	if err := s.UpsertIncident(ctx, Incident{
+		Namespace: "ns", Name: "other", Phase: "Done", Message: "all good",
+	}); err != nil {
+		t.Fatalf("upsert other: %v", err)
+	}
+
+	f := IncidentFilter{Phase: "Failed", Query: "image"}
+	total, err := s.CountIncidents(ctx, f)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if total != 10 {
+		t.Errorf("want 10 total, got %d", total)
+	}
+
+	// Page 1 of 3 with pageSize=4.
+	p1, err := s.ListIncidentsPage(ctx, f, 4, 0)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(p1) != 4 {
+		t.Errorf("page1 len = %d, want 4", len(p1))
+	}
+
+	// Page 3 (remainder=2).
+	p3, err := s.ListIncidentsPage(ctx, f, 4, 8)
+	if err != nil {
+		t.Fatalf("page3: %v", err)
+	}
+	if len(p3) != 2 {
+		t.Errorf("page3 len = %d, want 2", len(p3))
+	}
+}
+
+// TestFilteredCounts verifies CountIncidentsByPhase ignores filter.Phase (TASK-023).
+func TestFilteredCounts(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, inc := range []Incident{
+		{Namespace: "prod", Name: "a", Phase: "Done"},
+		{Namespace: "prod", Name: "b", Phase: "Failed"},
+		{Namespace: "staging", Name: "c", Phase: "Done"},
+	} {
+		if err := s.UpsertIncident(ctx, inc); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+
+	// Filter by phase=Failed + namespace=prod: CountIncidentsByPhase must ignore phase.
+	f := IncidentFilter{Phase: "Failed", Namespace: "prod"}
+	counts, err := s.CountIncidentsByPhase(ctx, f)
+	if err != nil {
+		t.Fatalf("CountIncidentsByPhase: %v", err)
+	}
+	// Only prod namespace: Done=1, Failed=1 (phase filter excluded).
+	if counts["Done"] != 1 {
+		t.Errorf("Done count = %d, want 1", counts["Done"])
+	}
+	if counts["Failed"] != 1 {
+		t.Errorf("Failed count = %d, want 1", counts["Failed"])
+	}
+	// staging is excluded by namespace filter.
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	if total != 2 {
+		t.Errorf("total from counts = %d, want 2", total)
+	}
+}
+
+// TestInjectionLiteral verifies that a SQL injection string is treated as a literal
+// (returns 0 rows, not all rows). SEC-002: parameterized queries only.
+func TestInjectionLiteral(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	if err := s.UpsertIncident(ctx, Incident{
+		Namespace: "ns", Name: "real-incident", Phase: "Done",
+		Message: "normal message",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// If the query is parameterized, this returns 0 rows (no incident has
+	// name/message/reason containing the literal string "' OR 1=1 --").
+	rows, err := s.ListIncidentsPage(ctx, IncidentFilter{Query: "' OR 1=1 --"}, 100, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("SEC-002: injection returned %d rows, want 0 — query is not parameterized", len(rows))
 	}
 }
 
@@ -262,7 +469,7 @@ func TestCountIncidentsByPhase(t *testing.T) {
 		}
 	}
 
-	got, err := s.CountIncidentsByPhase(ctx)
+	got, err := s.CountIncidentsByPhase(ctx, IncidentFilter{})
 	if err != nil {
 		t.Fatalf("CountIncidentsByPhase: %v", err)
 	}

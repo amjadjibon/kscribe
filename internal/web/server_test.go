@@ -3,6 +3,7 @@ package web_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,35 @@ import (
 	"github.com/amjadjibon/kscribe/internal/store"
 	"github.com/amjadjibon/kscribe/internal/web"
 )
+
+// filteredIncidents applies store.IncidentFilter in-memory (mirrors SQL behaviour).
+func filteredIncidents(all []store.Incident, filter store.IncidentFilter) []store.Incident {
+	if filter == (store.IncidentFilter{}) {
+		return all
+	}
+	var out []store.Incident
+	for _, inc := range all {
+		if filter.Phase != "" && inc.Phase != filter.Phase {
+			continue
+		}
+		if filter.Namespace != "" && inc.Namespace != filter.Namespace {
+			continue
+		}
+		if filter.Reason != "" && inc.Reason != filter.Reason {
+			continue
+		}
+		if filter.Query != "" {
+			q := strings.ToLower(filter.Query)
+			if !strings.Contains(strings.ToLower(inc.Name), q) &&
+				!strings.Contains(strings.ToLower(inc.Message), q) &&
+				!strings.Contains(strings.ToLower(inc.Reason), q) {
+				continue
+			}
+		}
+		out = append(out, inc)
+	}
+	return out
+}
 
 // fakeStore implements web.StoreReader in memory.
 type fakeStore struct {
@@ -47,8 +77,8 @@ func (f *fakeStore) ListIncidents(_ context.Context, limit int) ([]store.Inciden
 	return all, nil
 }
 
-func (f *fakeStore) ListIncidentsPage(_ context.Context, limit, offset int) ([]store.Incident, error) {
-	all := f.orderedIncidents()
+func (f *fakeStore) ListIncidentsPage(_ context.Context, filter store.IncidentFilter, limit, offset int) ([]store.Incident, error) {
+	all := filteredIncidents(f.orderedIncidents(), filter)
 	if offset >= len(all) {
 		return nil, nil
 	}
@@ -59,10 +89,17 @@ func (f *fakeStore) ListIncidentsPage(_ context.Context, limit, offset int) ([]s
 	return all, nil
 }
 
-func (f *fakeStore) CountIncidentsByPhase(_ context.Context) (map[string]int, error) {
+func (f *fakeStore) CountIncidents(_ context.Context, filter store.IncidentFilter) (int, error) {
+	return len(filteredIncidents(f.orderedIncidents(), filter)), nil
+}
+
+func (f *fakeStore) CountIncidentsByPhase(_ context.Context, filter store.IncidentFilter) (map[string]int, error) {
+	// Apply all filter fields except Phase (TASK-023).
+	noPhase := filter
+	noPhase.Phase = ""
 	counts := make(map[string]int)
-	for _, d := range f.incidents {
-		counts[d.Phase]++
+	for _, inc := range filteredIncidents(f.orderedIncidents(), noPhase) {
+		counts[inc.Phase]++
 	}
 	return counts, nil
 }
@@ -358,6 +395,273 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// errStore is a fakeStore variant that injects errors for specific methods.
+type errStore struct {
+	fakeStore
+	failCountByPhase bool
+	failCount        bool
+	failList         bool
+}
+
+var errDB = errors.New("db error")
+
+func (e *errStore) CountIncidentsByPhase(ctx context.Context, f store.IncidentFilter) (map[string]int, error) {
+	if e.failCountByPhase {
+		return nil, errDB
+	}
+	return e.fakeStore.CountIncidentsByPhase(ctx, f)
+}
+
+func (e *errStore) CountIncidents(ctx context.Context, f store.IncidentFilter) (int, error) {
+	if e.failCount {
+		return 0, errDB
+	}
+	return e.fakeStore.CountIncidents(ctx, f)
+}
+
+func (e *errStore) ListIncidentsPage(ctx context.Context, f store.IncidentFilter, limit, offset int) ([]store.Incident, error) {
+	if e.failList {
+		return nil, errDB
+	}
+	return e.fakeStore.ListIncidentsPage(ctx, f, limit, offset)
+}
+
+// TestListStoreErrors covers the three error branches in the list handler (66.7% → ~100%).
+func TestListStoreErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		st   *errStore
+	}{
+		{"CountIncidentsByPhase", &errStore{fakeStore: *seedStore(), failCountByPhase: true}},
+		{"CountIncidents", &errStore{fakeStore: *seedStore(), failCount: true}},
+		{"ListIncidentsPage", &errStore{fakeStore: *seedStore(), failList: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := web.NewBroker()
+			srv := web.New(tc.st, broker)
+			ts := httptest.NewServer(srv.Handler())
+			defer ts.Close()
+
+			resp, err := http.Get(ts.URL + "/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Errorf("want 500, got %d", resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestStaticNotFound asserts that a missing static file returns 404 (not 500).
+func TestStaticNotFound(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/static/does-not-exist.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("want 404, got %d", resp.StatusCode)
+	}
+}
+
+// TestStaticSVGFavicon checks the favicon returns 200 with an SVG content-type.
+func TestStaticSVGFavicon(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/static/icons/favicon.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "svg") && !strings.Contains(ct, "xml") {
+		t.Errorf("want SVG/XML content-type, got %q", ct)
+	}
+}
+
+// TestListHTMLAssetsWired verifies GET / embeds /static/css/app.css and /static/js/alpine.min.js.
+func TestListHTMLAssetsWired(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	for _, asset := range []string{"/static/css/app.css", "/static/js/alpine.min.js"} {
+		if !strings.Contains(body, asset) {
+			t.Errorf("want %q referenced in page HTML", asset)
+		}
+	}
+}
+
+// TestEmptyStorePager verifies that an empty store renders a sane "no incidents" state
+// with 200 OK (no panic, no 500).
+func TestEmptyStorePager(t *testing.T) {
+	empty := &fakeStore{incidents: map[string]*store.IncidentDetail{}}
+	broker := web.NewBroker()
+	srv := web.New(empty, broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+	// Template shows empty-state when there are no incidents.
+	if !strings.Contains(body, "No incidents yet") {
+		t.Errorf("want empty-state text for empty store, body excerpt: %s", body[:min(500, len(body))])
+	}
+}
+
+// TestPageClamp verifies that page=0 is treated as page=1, and page beyond lastPage is clamped.
+func TestPageClamp(t *testing.T) {
+	ts, _ := newTestServer(t) // 3 incidents, pageSize=25, so lastPage=1
+	defer ts.Close()
+
+	for _, url := range []string{"/?page=0", "/?page=-5", "/?page=99"} {
+		t.Run(url, func(t *testing.T) {
+			resp, err := http.Get(ts.URL + url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("want 200, got %d", resp.StatusCode)
+			}
+			var sb strings.Builder
+			_, _ = io.Copy(&sb, resp.Body)
+			body := sb.String()
+			if !strings.Contains(body, "Page 1 of 1") {
+				t.Errorf("%s: want 'Page 1 of 1' after clamp, got excerpt: %s", url, body[:min(500, len(body))])
+			}
+		})
+	}
+}
+
+// TestStatCardIgnoresPhaseFilter checks that stat-card counts reflect all phases even
+// when a phase filter is active (CountIncidentsByPhase ignores filter.Phase). TASK-023.
+func TestStatCardIgnoresPhaseFilter(t *testing.T) {
+	ts, _ := newTestServer(t) // seedStore: Done=1, Partial=1, Failed=1
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/?phase=Failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Even though we filtered to Failed, stat cards must still label Done and Partial.
+	for _, label := range []string{"Done", "Partial", "Failed"} {
+		if !strings.Contains(body, "stat-card-label\">"+label+"<") {
+			t.Errorf("want stat-card label %q even with phase=Failed filter", label)
+		}
+	}
+	// Five stat-card-count spans (five phases always rendered).
+	if got := strings.Count(body, "stat-card-count"); got != 5 {
+		t.Errorf("want 5 stat-card-count spans, got %d", got)
+	}
+}
+
+// TestListFilterByPhase verifies that GET /?phase=Failed returns only Failed incidents.
+func TestListFilterByPhase(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/?phase=Failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	if !strings.Contains(body, "failed-incident") {
+		t.Error("want failed-incident in body")
+	}
+	if strings.Contains(body, "done-incident") {
+		t.Error("done-incident should not appear when filtering by Failed")
+	}
+	if strings.Contains(body, "partial-incident") {
+		t.Error("partial-incident should not appear when filtering by Failed")
+	}
+}
+
+// TestFilterPreservingPager verifies that pager links and stat-card links carry the active filter.
+func TestFilterPreservingPager(t *testing.T) {
+	// Build a store with 30 Failed incidents so the pager appears.
+	now := time.Now().UTC()
+	f := &fakeStore{incidents: make(map[string]*store.IncidentDetail, 30)}
+	keys := make([]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		key := fmt.Sprintf("ns/fail-%02d", i)
+		keys = append(keys, key)
+		f.incidents[key] = &store.IncidentDetail{
+			Incident: store.Incident{
+				Namespace: "ns", Name: fmt.Sprintf("fail-%02d", i),
+				Phase: "Failed", Reason: "OOMKilled",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		}
+	}
+	f.orderedKeys = keys
+
+	broker := web.NewBroker()
+	srv := web.New(f, broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/?phase=Failed&q=fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Pager Next link must preserve phase=Failed and q=fail.
+	if !strings.Contains(body, "phase=Failed") {
+		t.Error("want phase=Failed in body (pager or stat-card links)")
+	}
+	if !strings.Contains(body, "q=fail") {
+		t.Error("want q=fail in body (pager or stat-card links)")
+	}
+	// Pager must show page 1 of 2.
+	if !strings.Contains(body, "Page 1 of 2") {
+		t.Errorf("want 'Page 1 of 2' in body")
+	}
 }
 
 // TestDetailSanitization verifies that XSS payloads in LLM RCA fields are

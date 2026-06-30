@@ -42,7 +42,72 @@ func Layout(title string, content templ.Component) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><script>\n\t\t\t\t// ponytail: pre-paint FOUC prevention + Alpine store registration\n\t\t\t\t(function(){\n\t\t\t\t\tvar t = localStorage.getItem('kscribe-theme') || 'system';\n\t\t\t\t\tvar mq = window.matchMedia('(prefers-color-scheme: dark)');\n\t\t\t\t\tfunction resolve(m) { return m === 'system' ? (mq.matches ? 'dark' : 'light') : m; }\n\t\t\t\t\tdocument.documentElement.setAttribute('data-theme', resolve(t));\n\t\t\t\t})();\n\t\t\t\tvar _kMQ = window.matchMedia('(prefers-color-scheme: dark)');\n\t\t\t\tfunction _kApply(m) {\n\t\t\t\t\tdocument.documentElement.setAttribute('data-theme', m === 'system' ? (_kMQ.matches ? 'dark' : 'light') : m);\n\t\t\t\t}\n\t\t\t\tdocument.addEventListener('alpine:init', function() {\n\t\t\t\t\tAlpine.store('theme', {\n\t\t\t\t\t\tmode: localStorage.getItem('kscribe-theme') || 'system',\n\t\t\t\t\t\tget label() {\n\t\t\t\t\t\t\treturn ({light: 'Light', dark: 'Dark', system: 'System'})[this.mode] || 'System';\n\t\t\t\t\t\t},\n\t\t\t\t\t\tset: function(m) { this.mode = m; localStorage.setItem('kscribe-theme', m); _kApply(m); },\n\t\t\t\t\t\tcycle: function() {\n\t\t\t\t\t\t\tvar ms = ['light', 'dark', 'system'];\n\t\t\t\t\t\t\tthis.set(ms[(ms.indexOf(this.mode) + 1) % 3]);\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\t_kMQ.addEventListener('change', function() {\n\t\t\t\t\t\tif (Alpine.store('theme').mode === 'system') _kApply('system');\n\t\t\t\t\t});\n\t\t\t\t});\n\t\t\t</script><link rel=\"preconnect\" href=\"https://fonts.bunny.net\"><link href=\"https://fonts.bunny.net/css?family=inter:400,500,600|jetbrains-mono:400,500&display=swap\" rel=\"stylesheet\"><link rel=\"stylesheet\" href=\"/static/css/app.css\"><link rel=\"icon\" href=\"/static/icons/favicon.svg\" type=\"image/svg+xml\"><script defer src=\"/static/js/alpine.min.js\"></script><script src=\"/static/js/htmx.min.js\"></script><script src=\"/static/js/htmx-sse.min.js\"></script></head><body><header class=\"topbar\"><a href=\"/\" class=\"topbar-brand\">kscribe</a> <span class=\"topbar-spacer\"></span> <button class=\"theme-toggle\" x-data x-on:click=\"$store.theme.cycle()\" x-text=\"$store.theme.label\">System</button></header><main class=\"main-content\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><script>\n\t\t\t\t// ponytail: pre-paint FOUC prevention + Alpine store registration\n\t\t\t\t(function(){\n\t\t\t\t\tvar t = localStorage.getItem('kscribe-theme') || 'system';\n\t\t\t\t\tvar mq = window.matchMedia('(prefers-color-scheme: dark)');\n\t\t\t\t\tfunction resolve(m) { return m === 'system' ? (mq.matches ? 'dark' : 'light') : m; }\n\t\t\t\t\tdocument.documentElement.setAttribute('data-theme', resolve(t));\n\t\t\t\t})();\n\t\t\t\tvar _kMQ = window.matchMedia('(prefers-color-scheme: dark)');\n\t\t\t\tfunction _kApply(m) {\n\t\t\t\t\tdocument.documentElement.setAttribute('data-theme', m === 'system' ? (_kMQ.matches ? 'dark' : 'light') : m);\n\t\t\t\t}\n\t\t\t\tdocument.addEventListener('alpine:init', function() {\n\t\t\t\t\tAlpine.store('theme', {\n\t\t\t\t\t\tmode: localStorage.getItem('kscribe-theme') || 'system',\n\t\t\t\t\t\tget label() {\n\t\t\t\t\t\t\treturn ({light: 'Light', dark: 'Dark', system: 'System'})[this.mode] || 'System';\n\t\t\t\t\t\t},\n\t\t\t\t\t\tset: function(m) { this.mode = m; localStorage.setItem('kscribe-theme', m); _kApply(m); },\n\t\t\t\t\t\tcycle: function() {\n\t\t\t\t\t\t\tvar ms = ['light', 'dark', 'system'];\n\t\t\t\t\t\t\tthis.set(ms[(ms.indexOf(this.mode) + 1) % 3]);\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\t_kMQ.addEventListener('change', function() {\n\t\t\t\t\t\tif (Alpine.store('theme').mode === 'system') _kApply('system');\n\t\t\t\t\t});\n\t\t\t\t});\n\t\t\t</script><link rel=\"stylesheet\" href=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var3 templ.SafeURL
+		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(Asset("/static/css/app.css"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/layout.templ`, Line: 39, Col: 61}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\"><link rel=\"icon\" href=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var4 templ.SafeURL
+		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinURLErrs(Asset("/static/icons/favicon.svg"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/layout.templ`, Line: 40, Col: 61}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" type=\"image/svg+xml\"><script defer src=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var5 string
+		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.ResolveAttributeValue(Asset("/static/js/alpine.min.js"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/layout.templ`, Line: 41, Col: 56}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var5)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\"></script><script src=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var6 string
+		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.ResolveAttributeValue(Asset("/static/js/htmx.min.js"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/layout.templ`, Line: 42, Col: 48}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var6)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\"></script><script src=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var7 string
+		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.ResolveAttributeValue(Asset("/static/js/htmx-sse.min.js"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/layout.templ`, Line: 43, Col: 52}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\"></script></head><body><header class=\"topbar\"><a href=\"/\" class=\"topbar-brand\">kscribe</a> <span class=\"topbar-spacer\"></span> <button class=\"theme-toggle\" x-data x-on:click=\"$store.theme.cycle()\" x-text=\"$store.theme.label\">System</button></header><main class=\"main-content\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -50,7 +115,7 @@ func Layout(title string, content templ.Component) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</main></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</main></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
