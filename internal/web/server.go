@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -14,9 +15,13 @@ import (
 	"github.com/amjadjibon/kscribe/public"
 )
 
+const pageSize = 25
+
 // StoreReader is the subset of store.Store the web server needs.
 type StoreReader interface {
 	ListIncidents(ctx context.Context, limit int) ([]store.Incident, error)
+	ListIncidentsPage(ctx context.Context, limit, offset int) ([]store.Incident, error)
+	CountIncidentsByPhase(ctx context.Context) (map[string]int, error)
 	GetIncident(ctx context.Context, namespace, name string) (*store.IncidentDetail, error)
 }
 
@@ -53,13 +58,37 @@ func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
-	incidents, err := s.store.ListIncidents(r.Context(), 100)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+
+	totals, err := s.store.CountIncidentsByPhase(r.Context())
+	if err != nil {
+		http.Error(w, "failed to count incidents", http.StatusInternalServerError)
+		return
+	}
+
+	total := 0
+	for _, n := range totals {
+		total += n
+	}
+	lastPage := (total + pageSize - 1) / pageSize
+	if lastPage < 1 {
+		lastPage = 1
+	}
+	if page > lastPage {
+		page = lastPage
+	}
+
+	incidents, err := s.store.ListIncidentsPage(r.Context(), pageSize, (page-1)*pageSize)
 	if err != nil {
 		http.Error(w, "failed to list incidents", http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = templates.Layout("kscribe — Incidents", templates.IncidentList(incidents)).Render(r.Context(), w)
+	_ = templates.Layout("kscribe — Incidents", templates.IncidentList(incidents, totals, page, lastPage)).Render(r.Context(), w)
 }
 
 func (s *Server) detail(w http.ResponseWriter, r *http.Request) {

@@ -405,6 +405,42 @@ tbody tr:hover td { background: var(--c-row-hover); }
 .markdown ul, .markdown ol { padding-left: var(--sp-5); margin: 0 0 var(--sp-2); }
 .markdown li { margin-bottom: var(--sp-1); }
 
+/* ── Pager ───────────────────────────────────────────────────────────── */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+  justify-content: center;
+}
+
+.pager-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--c-link);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  text-decoration: none;
+  transition: background .15s, border-color .15s;
+}
+
+.pager-btn:hover { background: var(--c-surface-alt); border-color: var(--c-link); text-decoration: none; }
+
+.pager-btn.disabled {
+  color: var(--c-text-muted);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.pager-label {
+  font-size: var(--text-sm);
+  color: var(--c-text-muted);
+}
+
 /* ── Confidence badge ────────────────────────────────────────────────── */
 .confidence-badge {
   display: inline-flex;

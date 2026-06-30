@@ -10,25 +10,25 @@ templ PhaseBadge(phase string) {
 	<span class={ "badge", phaseBadgeClass(phase) }>{ phase }</span>
 }
 
-// StatCards renders a row of per-phase count cards.
-templ StatCards(incidents []store.Incident) {
+// StatCards renders a row of per-phase count cards using DB-aggregated totals.
+templ StatCards(totals map[string]int) {
 	<div class="stat-cards">
 		for _, p := range []string{"Done", "Diagnosing", "Failed", "Partial", "Pending"} {
 			<div class={ "stat-card", phaseCardClass(p) }>
 				<span class="stat-card-label">{ p }</span>
-				<span class="stat-card-count">{ fmt.Sprintf("%d", phaseCount(incidents, p)) }</span>
+				<span class="stat-card-count">{ fmt.Sprintf("%d", totals[p]) }</span>
 			</div>
 		}
 	</div>
 }
 
-// IncidentList renders the dashboard list page.
-templ IncidentList(incidents []store.Incident) {
+// IncidentList renders the dashboard list page with pagination controls.
+templ IncidentList(incidents []store.Incident, totals map[string]int, page, lastPage int) {
 	<div class="page-header">
 		<h2>Incidents</h2>
 	</div>
-	@StatCards(incidents)
-	if len(incidents) == 0 {
+	@StatCards(totals)
+	if len(incidents) == 0 && page == 1 {
 		<div class="empty-state">
 			<p>No incidents yet.</p>
 		</div>
@@ -59,6 +59,19 @@ templ IncidentList(incidents []store.Incident) {
 				}
 			</tbody>
 		</table>
+		<div class="pager">
+			if page <= 1 {
+				<span class="pager-btn disabled">Prev</span>
+			} else {
+				<a class="pager-btn" href={ templ.SafeURL(fmt.Sprintf("/?page=%d", page-1)) }>Prev</a>
+			}
+			<span class="pager-label">Page { fmt.Sprintf("%d", page) } of { fmt.Sprintf("%d", lastPage) }</span>
+			if page >= lastPage {
+				<span class="pager-btn disabled">Next</span>
+			} else {
+				<a class="pager-btn" href={ templ.SafeURL(fmt.Sprintf("/?page=%d", page+1)) }>Next</a>
+			}
+		</div>
 	}
 }
 
@@ -231,13 +244,3 @@ func phaseCardClass(phase string) string {
 	}
 }
 
-// phaseCount returns the number of incidents in the given phase.
-func phaseCount(incidents []store.Incident, phase string) int {
-	n := 0
-	for _, inc := range incidents {
-		if inc.Phase == phase {
-			n++
-		}
-	}
-	return n
-}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -188,6 +189,94 @@ func TestInsertDiagnosisAndReadBack(t *testing.T) {
 	}
 	if len(got.RCAJson) == 0 {
 		t.Error("RCAJson empty")
+	}
+}
+
+// TestListIncidentsPage verifies paging, offset past end, and ordering.
+func TestListIncidentsPage(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Insert 30 incidents with distinct updated_at times so ordering is deterministic.
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 30; i++ {
+		ts := base.Add(time.Duration(i) * time.Second)
+		if err := s.UpsertIncident(ctx, Incident{
+			Namespace: "pg", Name: fmt.Sprintf("inc-%02d", i),
+			Phase: "Done", UpdatedAt: ts,
+		}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+
+	// Page 1 (25 items): most recent first, so inc-29..inc-05.
+	page1, err := s.ListIncidentsPage(ctx, 25, 0)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) != 25 {
+		t.Fatalf("page1 len = %d, want 25", len(page1))
+	}
+	if page1[0].Name != "inc-29" {
+		t.Errorf("page1[0] = %q, want inc-29", page1[0].Name)
+	}
+
+	// Page 2 (5 items): inc-04..inc-00.
+	page2, err := s.ListIncidentsPage(ctx, 25, 25)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2) != 5 {
+		t.Fatalf("page2 len = %d, want 5", len(page2))
+	}
+	if page2[0].Name != "inc-04" {
+		t.Errorf("page2[0] = %q, want inc-04", page2[0].Name)
+	}
+
+	// Offset past end returns empty.
+	empty, err := s.ListIncidentsPage(ctx, 25, 100)
+	if err != nil {
+		t.Fatalf("past-end: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("past-end len = %d, want 0", len(empty))
+	}
+}
+
+// TestCountIncidentsByPhase verifies phase aggregation.
+func TestCountIncidentsByPhase(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	phases := map[string]int{"Done": 3, "Failed": 2, "Pending": 1}
+	idx := 0
+	for phase, n := range phases {
+		for i := 0; i < n; i++ {
+			if err := s.UpsertIncident(ctx, Incident{
+				Namespace: "cp", Name: fmt.Sprintf("inc-%d", idx),
+				Phase: phase,
+			}); err != nil {
+				t.Fatalf("upsert: %v", err)
+			}
+			idx++
+		}
+	}
+
+	got, err := s.CountIncidentsByPhase(ctx)
+	if err != nil {
+		t.Fatalf("CountIncidentsByPhase: %v", err)
+	}
+	for phase, want := range phases {
+		if got[phase] != want {
+			t.Errorf("phase %q count = %d, want %d", phase, got[phase], want)
+		}
+	}
+	total := 0
+	for _, n := range got {
+		total += n
+	}
+	if total != 6 {
+		t.Errorf("total = %d, want 6", total)
 	}
 }
 
