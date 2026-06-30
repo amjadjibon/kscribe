@@ -70,6 +70,7 @@ chart's `llm.*` values).
 |----------|----------------|-----------------------|----------|
 | OpenAI | `openai` (default) | `gpt-4o-mini` | default |
 | Google Gemini | `google` | `gemini-2.0-flash` | auto (Gemini OpenAI endpoint) |
+| Z.AI (Zhipu GLM) | `zai` | `glm-4.6` | auto (Z.AI OpenAI endpoint) |
 | Other (Ollama, vLLM, …) | `openai` | model name | set `llm.baseURL` |
 
 Gemini (uses Google's OpenAI-compatible endpoint — no extra config beyond the key):

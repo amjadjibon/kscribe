@@ -2,13 +2,18 @@ package agent
 
 import "strings"
 
-// GeminiBaseURL is Google Gemini's OpenAI-compatible endpoint base.
-const GeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
+// Known OpenAI-compatible endpoint bases.
+const (
+	// GeminiBaseURL is Google Gemini's OpenAI-compatible endpoint base.
+	GeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
+	// ZAIBaseURL is Z.AI (Zhipu GLM) OpenAI-compatible endpoint base.
+	ZAIBaseURL = "https://api.z.ai/api/paas/v4"
+)
 
 // ResolveBaseURL returns the effective API base for a provider. An explicit
-// baseURL always wins; otherwise google/gemini default to the Gemini endpoint
-// and everything else falls through to the OpenAI default (empty).
-// ponytail: Gemini speaks the OpenAI chat-completions API, so no separate client.
+// baseURL always wins; otherwise known providers map to their endpoint and
+// everything else falls through to the OpenAI default (empty).
+// ponytail: these all speak the OpenAI chat-completions API, so no separate client.
 func ResolveBaseURL(provider, baseURL string) string {
 	if baseURL != "" {
 		return baseURL
@@ -16,6 +21,8 @@ func ResolveBaseURL(provider, baseURL string) string {
 	switch strings.ToLower(provider) {
 	case "google", "gemini":
 		return GeminiBaseURL
+	case "zai", "z.ai", "zhipu", "glm":
+		return ZAIBaseURL
 	default:
 		return ""
 	}

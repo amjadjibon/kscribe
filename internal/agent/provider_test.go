@@ -13,6 +13,9 @@ func TestResolveBaseURL(t *testing.T) {
 		{"google", "", GeminiBaseURL},
 		{"gemini", "", GeminiBaseURL},
 		{"GEMINI", "", GeminiBaseURL},
+		{"zai", "", ZAIBaseURL},
+		{"z.ai", "", ZAIBaseURL},
+		{"glm", "", ZAIBaseURL},
 		{"google", "https://custom/v1", "https://custom/v1"}, // explicit wins
 		{"", "", ""},
 	}
