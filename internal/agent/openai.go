@@ -20,10 +20,13 @@ type OpenAIClient struct {
 	HTTPClient *http.Client
 }
 
-// NewOpenAIClient constructs an OpenAIClient. baseURL defaults to api.openai.com.
+// NewOpenAIClient constructs an OpenAIClient. baseURL is the API base including
+// the version segment (e.g. https://api.openai.com/v1, or Gemini's
+// https://generativelanguage.googleapis.com/v1beta/openai); "/chat/completions"
+// is appended. Empty defaults to OpenAI.
 func NewOpenAIClient(baseURL, apiKey, model string) *OpenAIClient {
 	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+		baseURL = "https://api.openai.com/v1"
 	}
 	return &OpenAIClient{
 		BaseURL:    baseURL,
@@ -42,7 +45,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req Request) (Response, err
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+		c.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return Response{}, fmt.Errorf("build http request: %w", err)
 	}

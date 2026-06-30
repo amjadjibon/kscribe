@@ -1,65 +1,85 @@
-name: e2e
+name: CI
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  minikube:
-    name: build image and deploy via Helm in minikube
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
 
-      - name: Start minikube
-        uses: medyagh/setup-minikube@latest
-
+      # deploy/kscribe.yaml is rendered from the Helm chart (make manifest-check).
       - uses: azure/setup-helm@v4
 
-      - name: Build image into minikube
-        run: |
-          eval "$(minikube docker-env)"
-          docker build -t ghcr.io/amjadjibon/kscribe:latest .
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal api)" || { gofmt -l cmd internal api; exit 1; }
 
-      # Install the operator via the chart (the single source of truth). The chart
-      # creates the namespace, CRDs, RBAC, and the LLM Secret from --set llm.apiKey.
-      # A dummy key is fine — this smoke test only checks the operator boots and
-      # serves /healthz. image.pullPolicy defaults to IfNotPresent, so the locally
-      # built image is used instead of pulling from GHCR. --wait blocks until ready.
-      - name: helm install
-        run: |
-          helm install kscribe ./charts/kscribe \
-            --namespace kscribe-system --create-namespace \
-            --set llm.apiKey=ci-dummy-key \
-            --wait --timeout 3m
+      - name: vet
+        run: go vet ./...
 
-      - name: Verify dashboard /healthz
-        run: |
-          kubectl -n kscribe-system port-forward service/kscribe-dashboard 8080:8080 &
-          PF_PID=$!
-          for i in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:8080/healthz; then
-              echo "healthz OK"
-              kill $PF_PID
-              exit 0
-            fi
-            sleep 2
-          done
-          kill $PF_PID
-          echo "healthz never became ready"
-          exit 1
+      - name: test
+        run: go test ./...
 
-      - name: Diagnostics on failure
-        if: failure()
+      - name: build
+        run: go build ./...
+
+      # Generated artifacts must be committed and reproducible.
+      - name: codegen is up to date
         run: |
-          helm -n kscribe-system status kscribe || true
-          kubectl -n kscribe-system get pods,deploy,pvc,svc -o wide || true
-          kubectl -n kscribe-system describe deployment kscribe || true
-          kubectl -n kscribe-system logs deployment/kscribe --all-containers --tail=200 || true
-          kubectl get events -n kscribe-system --sort-by=.lastTimestamp || true
+          make generate manifests templ
+          git diff --exit-code
+
+      - name: deploy manifest is reproducible
+        run: make manifest-check
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        # Only push on main / tags; PRs from forks can't access packages anyway.
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

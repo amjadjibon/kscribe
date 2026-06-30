@@ -60,6 +60,48 @@ kubectl port-forward svc/kscribe-dashboard 8080:8080 -n kscribe-system
 
 ---
 
+## LLM provider
+
+kscribe talks to any OpenAI-compatible chat-completions API. Configure it with
+`KSCRIBE_LLM_PROVIDER` / `KSCRIBE_LLM_MODEL` / `KSCRIBE_LLM_BASE_URL` (or the
+chart's `llm.*` values).
+
+| Provider | `llm.provider` | `llm.model` (example) | Base URL |
+|----------|----------------|-----------------------|----------|
+| OpenAI | `openai` (default) | `gpt-4o-mini` | default |
+| Google Gemini | `google` | `gemini-2.0-flash` | auto (Gemini OpenAI endpoint) |
+| Z.AI (Zhipu GLM) | `zai` | `glm-4.6` | auto (Z.AI OpenAI endpoint) |
+| Other (Ollama, vLLM, …) | `openai` | model name | set `llm.baseURL` |
+
+Gemini (uses Google's OpenAI-compatible endpoint — no extra config beyond the key):
+
+```sh
+helm upgrade --install kscribe ./charts/kscribe \
+  --namespace kscribe-system --create-namespace \
+  --set llm.provider=google \
+  --set llm.model=gemini-2.0-flash \
+  --set llm.apiKey=$GEMINI_API_KEY
+```
+
+`llm.baseURL` overrides the endpoint for any other OpenAI-compatible server.
+
+### Local end-to-end smoke test
+
+`scripts/local-test.sh` runs the whole loop on a local cluster (minikube or
+colima/k3s): build → load image → `helm install` → fire failing pods → wait for
+diagnoses → print RCAs → clean up.
+
+```sh
+# defaults target LM Studio at http://192.168.100.37:1234/v1
+LLM_BASE_URL=http://<host>:1234/v1 LLM_MODEL=google/gemma-4-e4b scripts/local-test.sh
+
+KEEP=1 scripts/local-test.sh        # leave it running afterwards
+SKIP_BUILD=1 scripts/local-test.sh  # reuse the image already in the cluster
+UNINSTALL=1 scripts/local-test.sh   # helm uninstall at the end
+```
+
+---
+
 ## Custom Resource examples
 
 ### DiagnosisPolicy — namespace-scoped policy override

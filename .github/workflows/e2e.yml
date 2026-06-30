@@ -1,0 +1,65 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  minikube:
+    name: build image and deploy via Helm in minikube
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start minikube
+        uses: medyagh/setup-minikube@latest
+
+      - uses: azure/setup-helm@v4
+
+      - name: Build image into minikube
+        run: |
+          eval "$(minikube docker-env)"
+          docker build -t ghcr.io/amjadjibon/kscribe:latest .
+
+      # Install the operator via the chart (the single source of truth). The chart
+      # creates the namespace, CRDs, RBAC, and the LLM Secret from --set llm.apiKey.
+      # A dummy key is fine — this smoke test only checks the operator boots and
+      # serves /healthz. image.pullPolicy defaults to IfNotPresent, so the locally
+      # built image is used instead of pulling from GHCR. --wait blocks until ready.
+      - name: helm install
+        run: |
+          helm install kscribe ./charts/kscribe \
+            --namespace kscribe-system --create-namespace \
+            --set llm.apiKey=ci-dummy-key \
+            --wait --timeout 3m
+
+      - name: Verify dashboard /healthz
+        run: |
+          kubectl -n kscribe-system port-forward service/kscribe-dashboard 8080:8080 &
+          PF_PID=$!
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/healthz; then
+              echo "healthz OK"
+              kill $PF_PID
+              exit 0
+            fi
+            sleep 2
+          done
+          kill $PF_PID
+          echo "healthz never became ready"
+          exit 1
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          helm -n kscribe-system status kscribe || true
+          kubectl -n kscribe-system get pods,deploy,pvc,svc -o wide || true
+          kubectl -n kscribe-system describe deployment kscribe || true
+          kubectl -n kscribe-system logs deployment/kscribe --all-containers --tail=200 || true
+          kubectl get events -n kscribe-system --sort-by=.lastTimestamp || true

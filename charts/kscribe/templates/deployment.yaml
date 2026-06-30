@@ -39,6 +39,10 @@ spec:
           value: {{ .Values.llm.provider | quote }}
         - name: KSCRIBE_LLM_MODEL
           value: {{ .Values.llm.model | quote }}
+        {{- if .Values.llm.baseURL }}
+        - name: KSCRIBE_LLM_BASE_URL
+          value: {{ .Values.llm.baseURL | quote }}
+        {{- end }}
         - name: KSCRIBE_LLM_API_KEY
           valueFrom:
             secretKeyRef:

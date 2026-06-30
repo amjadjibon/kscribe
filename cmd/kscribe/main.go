@@ -134,7 +134,9 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 			broker := web.NewBroker()
 
 			// OpenAI-compatible provider built from config (CON-003: sonic used inside package).
-			provider := agent.NewOpenAIClient(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
+			// provider=google/gemini auto-targets Gemini's OpenAI-compatible endpoint.
+			baseURL := agent.ResolveBaseURL(cfg.LLMProvider, cfg.LLMBaseURL)
+			provider := agent.NewOpenAIClient(baseURL, cfg.LLMAPIKey, cfg.LLMModel)
 
 			// Event watcher — creates KscribeDiagnosis CRs from Warning Events.
 			if err := controller.SetupEventWatcherWithManager(mgr, controller.EventWatcherDeps{
