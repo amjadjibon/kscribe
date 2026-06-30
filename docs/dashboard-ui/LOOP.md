@@ -7,7 +7,7 @@ max_iterations: 3
 max_phases: 6
 max_agents: 3
 current_iteration: 1
-status: running
+status: complete
 last_review_base: 'aec6c1a'
 ---
 
@@ -41,4 +41,4 @@ last_review_base: 'aec6c1a'
 - [x] implement-plan (sequential, 6 phases)
 - [x] qa (internal/web 87.5%->96.6%, +edge/sanitization tests, no bugs)
 - [x] code-review (Approve: 0C/0H/0M/1L/1I)
-- [x] decide -> Clean Exit; LOW-001 (asset cache) + INFO-001 (fonts CDN) non-blocking
+- [x] decide -> fixed LOW-001 (cache-bust) + INFO-001 (self-host fonts) @ee748a3; Clean Exit
