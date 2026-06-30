@@ -15,6 +15,35 @@ import (
 	"github.com/amjadjibon/kscribe/internal/web"
 )
 
+// filteredIncidents applies store.IncidentFilter in-memory (mirrors SQL behaviour).
+func filteredIncidents(all []store.Incident, filter store.IncidentFilter) []store.Incident {
+	if filter == (store.IncidentFilter{}) {
+		return all
+	}
+	var out []store.Incident
+	for _, inc := range all {
+		if filter.Phase != "" && inc.Phase != filter.Phase {
+			continue
+		}
+		if filter.Namespace != "" && inc.Namespace != filter.Namespace {
+			continue
+		}
+		if filter.Reason != "" && inc.Reason != filter.Reason {
+			continue
+		}
+		if filter.Query != "" {
+			q := strings.ToLower(filter.Query)
+			if !strings.Contains(strings.ToLower(inc.Name), q) &&
+				!strings.Contains(strings.ToLower(inc.Message), q) &&
+				!strings.Contains(strings.ToLower(inc.Reason), q) {
+				continue
+			}
+		}
+		out = append(out, inc)
+	}
+	return out
+}
+
 // fakeStore implements web.StoreReader in memory.
 type fakeStore struct {
 	incidents map[string]*store.IncidentDetail // key: namespace/name
@@ -47,8 +76,8 @@ func (f *fakeStore) ListIncidents(_ context.Context, limit int) ([]store.Inciden
 	return all, nil
 }
 
-func (f *fakeStore) ListIncidentsPage(_ context.Context, limit, offset int) ([]store.Incident, error) {
-	all := f.orderedIncidents()
+func (f *fakeStore) ListIncidentsPage(_ context.Context, filter store.IncidentFilter, limit, offset int) ([]store.Incident, error) {
+	all := filteredIncidents(f.orderedIncidents(), filter)
 	if offset >= len(all) {
 		return nil, nil
 	}
@@ -59,10 +88,17 @@ func (f *fakeStore) ListIncidentsPage(_ context.Context, limit, offset int) ([]s
 	return all, nil
 }
 
-func (f *fakeStore) CountIncidentsByPhase(_ context.Context) (map[string]int, error) {
+func (f *fakeStore) CountIncidents(_ context.Context, filter store.IncidentFilter) (int, error) {
+	return len(filteredIncidents(f.orderedIncidents(), filter)), nil
+}
+
+func (f *fakeStore) CountIncidentsByPhase(_ context.Context, filter store.IncidentFilter) (map[string]int, error) {
+	// Apply all filter fields except Phase (TASK-023).
+	noPhase := filter
+	noPhase.Phase = ""
 	counts := make(map[string]int)
-	for _, d := range f.incidents {
-		counts[d.Phase]++
+	for _, inc := range filteredIncidents(f.orderedIncidents(), noPhase) {
+		counts[inc.Phase]++
 	}
 	return counts, nil
 }
@@ -358,6 +394,80 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestListFilterByPhase verifies that GET /?phase=Failed returns only Failed incidents.
+func TestListFilterByPhase(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/?phase=Failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	if !strings.Contains(body, "failed-incident") {
+		t.Error("want failed-incident in body")
+	}
+	if strings.Contains(body, "done-incident") {
+		t.Error("done-incident should not appear when filtering by Failed")
+	}
+	if strings.Contains(body, "partial-incident") {
+		t.Error("partial-incident should not appear when filtering by Failed")
+	}
+}
+
+// TestFilterPreservingPager verifies that pager links and stat-card links carry the active filter.
+func TestFilterPreservingPager(t *testing.T) {
+	// Build a store with 30 Failed incidents so the pager appears.
+	now := time.Now().UTC()
+	f := &fakeStore{incidents: make(map[string]*store.IncidentDetail, 30)}
+	keys := make([]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		key := fmt.Sprintf("ns/fail-%02d", i)
+		keys = append(keys, key)
+		f.incidents[key] = &store.IncidentDetail{
+			Incident: store.Incident{
+				Namespace: "ns", Name: fmt.Sprintf("fail-%02d", i),
+				Phase: "Failed", Reason: "OOMKilled",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		}
+	}
+	f.orderedKeys = keys
+
+	broker := web.NewBroker()
+	srv := web.New(f, broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/?phase=Failed&q=fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Pager Next link must preserve phase=Failed and q=fail.
+	if !strings.Contains(body, "phase=Failed") {
+		t.Error("want phase=Failed in body (pager or stat-card links)")
+	}
+	if !strings.Contains(body, "q=fail") {
+		t.Error("want q=fail in body (pager or stat-card links)")
+	}
+	// Pager must show page 1 of 2.
+	if !strings.Contains(body, "Page 1 of 2") {
+		t.Errorf("want 'Page 1 of 2' in body")
+	}
 }
 
 // TestDetailSanitization verifies that XSS payloads in LLM RCA fields are

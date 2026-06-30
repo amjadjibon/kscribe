@@ -441,6 +441,70 @@ tbody tr:hover td { background: var(--c-row-hover); }
   color: var(--c-text-muted);
 }
 
+/* ── Filter bar ──────────────────────────────────────────────────────── */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.filter-input,
+.filter-select {
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  color: var(--c-text);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  outline: none;
+  transition: border-color .15s;
+}
+
+.filter-input-wide { flex: 1; min-width: 160px; }
+
+.filter-input:focus,
+.filter-select:focus { border-color: var(--c-link); }
+
+.filter-submit {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: #fff;
+  background: var(--c-link);
+  border: 1px solid var(--c-link);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: background .15s;
+}
+.filter-submit:hover { background: var(--c-link-hover); border-color: var(--c-link-hover); }
+
+.filter-clear {
+  font-size: var(--text-sm);
+  color: var(--c-text-muted);
+  padding: var(--sp-1) var(--sp-2);
+  text-decoration: none;
+}
+.filter-clear:hover { color: var(--c-text); text-decoration: underline; }
+
+/* Stat cards as links */
+a.stat-card {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: box-shadow .15s, border-color .15s;
+}
+a.stat-card:hover { box-shadow: var(--shadow-md); text-decoration: none; }
+.stat-card-active { box-shadow: var(--shadow-md); border-color: var(--c-link) !important; }
+
 /* ── Confidence badge ────────────────────────────────────────────────── */
 .confidence-badge {
   display: inline-flex;
