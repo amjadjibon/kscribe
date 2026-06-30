@@ -62,53 +62,116 @@ templ IncidentList(incidents []store.Incident) {
 	}
 }
 
-// IncidentDetail renders the full incident detail page including diagnoses and SSE hook.
+// IncidentDetail renders the full incident detail page with tabbed layout.
+// CON-005: tabs use Alpine x-show (not x-if) so the SSE block stays in the DOM.
 templ IncidentDetail(d *store.IncidentDetail) {
-	<h2>
-		{ d.Namespace }/{ d.Name }
-		@PhaseBadge(d.Phase)
-	</h2>
-	<section>
-		<h3>Event</h3>
-		<dl>
-			<dt>Object</dt><dd>{ d.InvolvedObjectKind }/{ d.InvolvedObjectName } ({ d.InvolvedObjectNamespace })</dd>
-			<dt>Reason</dt><dd>{ d.Reason }</dd>
-			<dt>Message</dt><dd>{ d.Message }</dd>
-			if d.StartedAt != nil {
-				<dt>Started</dt><dd>{ d.StartedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
-			}
-			if d.CompletedAt != nil {
-				<dt>Completed</dt><dd>{ d.CompletedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
-			}
-			<dt>LLM</dt><dd>{ d.LLMProvider }/{ d.LLMModel } ({ fmt.Sprintf("%d tokens", d.TokensUsed) })</dd>
-		</dl>
-	</section>
-	<section>
-		<h3>
-			Live Status
-			<small style="font-weight:normal;font-size:.7em;color:#888;">(SSE)</small>
-		</h3>
-		<div
-			hx-ext="sse"
-			sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/stream" }
-			sse-swap="message"
-			hx-swap="innerHTML"
-			id="live-status"
-		>
-			@PhaseBadge(d.Phase)
+	<div x-data="{ tab: 'overview' }">
+		<div class="detail-header">
+			<h2>
+				{ d.Namespace }/{ d.Name }
+				@PhaseBadge(d.Phase)
+			</h2>
 		</div>
-	</section>
-	if len(d.Diagnoses) > 0 {
-		<section>
-			<h3>RCA / Remediation</h3>
-			for _, diag := range d.Diagnoses {
-				@DiagnosisBlock(diag)
+		<div class="tab-bar" role="tablist">
+			<button
+				class="tab-button"
+				:class="{ 'tab-button-active': tab === 'overview' }"
+				@click="tab='overview'"
+				role="tab"
+			>Overview</button>
+			<button
+				class="tab-button"
+				:class="{ 'tab-button-active': tab === 'rca' }"
+				@click="tab='rca'"
+				role="tab"
+			>RCA</button>
+			<button
+				class="tab-button"
+				:class="{ 'tab-button-active': tab === 'raw' }"
+				@click="tab='raw'"
+				role="tab"
+			>Raw</button>
+		</div>
+		<!-- Overview tab: event info + SSE live status.
+		     x-show keeps this in the DOM so the SSE stream is not interrupted. -->
+		<div x-show="tab === 'overview'">
+			<section>
+				<h3>Event</h3>
+				<dl>
+					<dt>Object</dt><dd>{ d.InvolvedObjectKind }/{ d.InvolvedObjectName } ({ d.InvolvedObjectNamespace })</dd>
+					<dt>Reason</dt><dd>{ d.Reason }</dd>
+					<dt>Message</dt><dd>{ d.Message }</dd>
+					if d.StartedAt != nil {
+						<dt>Started</dt><dd>{ d.StartedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+					}
+					if d.CompletedAt != nil {
+						<dt>Completed</dt><dd>{ d.CompletedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+					}
+					<dt>LLM</dt><dd>{ d.LLMProvider }/{ d.LLMModel } ({ fmt.Sprintf("%d tokens", d.TokensUsed) })</dd>
+				</dl>
+			</section>
+			<section>
+				<h3>
+					Live Status
+					<small style="font-weight:normal;font-size:.7em;color:#888;">(SSE)</small>
+				</h3>
+				<div
+					hx-ext="sse"
+					sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/stream" }
+					sse-swap="message"
+					hx-swap="innerHTML"
+					id="live-status"
+				>
+					@PhaseBadge(d.Phase)
+				</div>
+			</section>
+		</div>
+		<!-- RCA tab: diagnosis cards with sanitized Markdown.
+		     x-show keeps elements in DOM — Alpine toggles display only. -->
+		<div x-show="tab === 'rca'">
+			if len(d.Diagnoses) > 0 {
+				<section>
+					<h3>RCA / Remediation</h3>
+					for _, diag := range d.Diagnoses {
+						@DiagnosisBlock(diag)
+					}
+				</section>
+			} else {
+				<div class="empty-state">
+					<p>No diagnosis available yet.</p>
+				</div>
 			}
-		</section>
-	}
+		</div>
+		<!-- Raw tab: plain key/value dump of event + LLM fields. -->
+		<div x-show="tab === 'raw'">
+			<section>
+				<h3>Raw Fields</h3>
+				<dl>
+					<dt>Namespace</dt><dd>{ d.Namespace }</dd>
+					<dt>Name</dt><dd>{ d.Name }</dd>
+					<dt>Phase</dt><dd>{ d.Phase }</dd>
+					<dt>Involved Object</dt><dd>{ d.InvolvedObjectKind }/{ d.InvolvedObjectName } ({ d.InvolvedObjectNamespace })</dd>
+					<dt>Reason</dt><dd>{ d.Reason }</dd>
+					<dt>Message</dt><dd>{ d.Message }</dd>
+					<dt>LLM Provider</dt><dd>{ d.LLMProvider }</dd>
+					<dt>LLM Model</dt><dd>{ d.LLMModel }</dd>
+					<dt>Tokens Used</dt><dd>{ fmt.Sprintf("%d", d.TokensUsed) }</dd>
+					if d.StartedAt != nil {
+						<dt>Started At</dt><dd>{ d.StartedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+					}
+					if d.CompletedAt != nil {
+						<dt>Completed At</dt><dd>{ d.CompletedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+					}
+					<dt>Created At</dt><dd>{ d.CreatedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+					<dt>Updated At</dt><dd>{ d.UpdatedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
+				</dl>
+			</section>
+		</div>
+	</div>
 }
 
-// DiagnosisBlock renders a single diagnosis record.
+// DiagnosisBlock renders a single diagnosis record with sanitized Markdown for LLM fields.
+// SEC-001: Summary, RootCause, Remediation go through web.RenderMarkdown (goldmark + bluemonday).
 templ DiagnosisBlock(diag store.Diagnosis) {
 	<article>
 		<header>
@@ -117,15 +180,21 @@ templ DiagnosisBlock(diag store.Diagnosis) {
 		</header>
 		<dl>
 			if diag.Summary != "" {
-				<dt>Summary</dt><dd>{ diag.Summary }</dd>
+				<dt>Summary</dt>
+				<dd class="markdown">@RenderMarkdown(diag.Summary)</dd>
 			}
 			if diag.RootCause != "" {
-				<dt>Root Cause</dt><dd>{ diag.RootCause }</dd>
+				<dt>Root Cause</dt>
+				<dd class="markdown">@RenderMarkdown(diag.RootCause)</dd>
 			}
 			if diag.Remediation != "" {
-				<dt>Remediation</dt><dd>{ diag.Remediation }</dd>
+				<dt>Remediation</dt>
+				<dd class="markdown">@RenderMarkdown(diag.Remediation)</dd>
 			}
-			<dt>Confidence</dt><dd>{ fmt.Sprintf("%.0f%%", diag.Confidence*100) }</dd>
+			<dt>Confidence</dt>
+			<dd>
+				<span class="confidence-badge">{ fmt.Sprintf("%.0f%%", diag.Confidence*100) }</span>
+			</dd>
 		</dl>
 	</article>
 }

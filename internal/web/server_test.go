@@ -230,6 +230,76 @@ func TestListStatCards(t *testing.T) {
 	}
 }
 
+// TestDetailSanitization verifies that XSS payloads in LLM RCA fields are
+// stripped from the rendered HTML before it reaches the browser. SEC-001.
+func TestDetailSanitization(t *testing.T) {
+	now := time.Now().UTC()
+	xssStore := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/xss-incident": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "xss-incident",
+				InvolvedObjectKind: "Pod", InvolvedObjectName: "pod", InvolvedObjectNamespace: "default",
+				Reason: "Test", Message: "xss test",
+				Phase: "Done", CreatedAt: now, UpdatedAt: now,
+			},
+			Diagnoses: []store.Diagnosis{{
+				ID:          2,
+				Namespace:   "default",
+				Name:        "xss-incident",
+				Summary:     `<script>alert(1)</script>`,
+				RootCause:   `<img src=x onerror=alert(1)>`,
+				Remediation: "clean fix",
+				Confidence:  0.5,
+				CreatedAt:   now,
+			}},
+		},
+	}}
+	broker := web.NewBroker()
+	srv := web.New(xssStore, broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/xss-incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Layout includes legitimate <script> tags; check for the injected payload pattern.
+	if strings.Contains(body, "<script>alert") {
+		t.Error("SEC-001: injected <script>alert payload found in rendered detail page")
+	}
+	if strings.Contains(body, "onerror=") {
+		t.Error("SEC-001: onerror= attribute found in rendered detail page")
+	}
+}
+
+// TestDetailSSEAttribute verifies the SSE live-status block is present in the
+// rendered detail page with sse-connect and the incident phase. REQ-006.
+func TestDetailSSEAttribute(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/done-incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	if !strings.Contains(body, "sse-connect") {
+		t.Error("REQ-006: sse-connect attribute missing from detail page")
+	}
+	if !strings.Contains(body, "Done") {
+		t.Error("REQ-006: phase 'Done' not found in detail page")
+	}
+}
+
 func TestSSE(t *testing.T) {
 	ts, broker := newTestServer(t)
 	defer ts.Close()

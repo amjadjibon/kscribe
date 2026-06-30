@@ -338,6 +338,7 @@ tbody tr:hover td { background: var(--c-row-hover); }
 
 /* ── Page header ─────────────────────────────────────────────────────── */
 .page-header { margin-bottom: var(--sp-6); }
+.detail-header { margin-bottom: var(--sp-4); }
 
 /* ── Empty state ─────────────────────────────────────────────────────── */
 .empty-state {
@@ -347,4 +348,73 @@ tbody tr:hover td { background: var(--c-row-hover); }
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
+}
+
+/* ── Tab bar ─────────────────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  gap: var(--sp-1);
+  border-bottom: 2px solid var(--c-border);
+  margin-bottom: var(--sp-6);
+}
+
+.tab-button {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--c-text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  transition: color .15s, border-color .15s;
+}
+
+.tab-button:hover { color: var(--c-text); }
+
+.tab-button-active {
+  color: var(--c-link);
+  border-bottom-color: var(--c-link);
+  font-weight: 600;
+}
+
+/* ── Markdown content ────────────────────────────────────────────────── */
+/* ponytail: scoped to .markdown so global pre/code are unaffected */
+.markdown { line-height: 1.65; }
+.markdown p { margin: 0 0 var(--sp-2); }
+.markdown p:last-child { margin-bottom: 0; }
+
+.markdown pre,
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  background: var(--c-code-bg);
+  border-radius: var(--r-sm);
+}
+.markdown code { padding: .15em .35em; }
+.markdown pre {
+  padding: var(--sp-4);
+  overflow-x: auto;
+  border: 1px solid var(--c-border);
+}
+.markdown pre code { background: transparent; padding: 0; }
+
+.markdown ul, .markdown ol { padding-left: var(--sp-5); margin: 0 0 var(--sp-2); }
+.markdown li { margin-bottom: var(--sp-1); }
+
+/* ── Confidence badge ────────────────────────────────────────────────── */
+.confidence-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: .2em .55em;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  background: var(--c-surface-alt);
+  border: 1px solid var(--c-border);
+  color: var(--c-text);
+  font-family: var(--font-mono);
 }
