@@ -17,7 +17,7 @@ last_review_base: 'aec6c1a'
 
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
-| 1    | pending | —    | —    | —   | —   | sequential | implemented |
+| 1    | Approve | 0 | 0 | 0 | 1 | sequential | Clean Exit (1 Low/1 Info non-blocking) |
 
 ## Stacked PRs
 
@@ -40,5 +40,5 @@ last_review_base: 'aec6c1a'
 ### Iteration 1
 - [x] implement-plan (sequential, 6 phases)
 - [x] qa (internal/web 87.5%->96.6%, +edge/sanitization tests, no bugs)
-- [ ] code-review
-- [ ] decide
+- [x] code-review (Approve: 0C/0H/0M/1L/1I)
+- [x] decide -> Clean Exit; LOW-001 (asset cache) + INFO-001 (fonts CDN) non-blocking
