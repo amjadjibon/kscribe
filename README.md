@@ -60,6 +60,32 @@ kubectl port-forward svc/kscribe-dashboard 8080:8080 -n kscribe-system
 
 ---
 
+## LLM provider
+
+kscribe talks to any OpenAI-compatible chat-completions API. Configure it with
+`KSCRIBE_LLM_PROVIDER` / `KSCRIBE_LLM_MODEL` / `KSCRIBE_LLM_BASE_URL` (or the
+chart's `llm.*` values).
+
+| Provider | `llm.provider` | `llm.model` (example) | Base URL |
+|----------|----------------|-----------------------|----------|
+| OpenAI | `openai` (default) | `gpt-4o-mini` | default |
+| Google Gemini | `google` | `gemini-2.0-flash` | auto (Gemini OpenAI endpoint) |
+| Other (Ollama, vLLM, …) | `openai` | model name | set `llm.baseURL` |
+
+Gemini (uses Google's OpenAI-compatible endpoint — no extra config beyond the key):
+
+```sh
+helm upgrade --install kscribe ./charts/kscribe \
+  --namespace kscribe-system --create-namespace \
+  --set llm.provider=google \
+  --set llm.model=gemini-2.0-flash \
+  --set llm.apiKey=$GEMINI_API_KEY
+```
+
+`llm.baseURL` overrides the endpoint for any other OpenAI-compatible server.
+
+---
+
 ## Custom Resource examples
 
 ### DiagnosisPolicy — namespace-scoped policy override

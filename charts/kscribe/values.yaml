@@ -54,8 +54,13 @@ leaderElect: false
 redactEnabled: true # SEC-001: redaction is always enforced; this is audit metadata.
 
 llm:
+  # provider "openai" (default) or "google"/"gemini". google auto-targets Gemini's
+  # OpenAI-compatible endpoint; any OpenAI-compatible API works via baseURL.
   provider: openai
   model: gpt-4o-mini
+  # Override the API base (incl. version segment). Empty = provider default.
+  # e.g. https://generativelanguage.googleapis.com/v1beta/openai for Gemini.
+  baseURL: ""
   # Provide the API key inline (a Secret is created) OR point at an existing Secret.
   apiKey: ""
   existingSecret: ""
