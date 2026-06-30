@@ -1,6 +1,6 @@
 ---
 goal: Dashboard UI refresh — themes, tabs, markdown RCA, better styling
-version: 1.1
+version: 1.2
 date_created: 2026-06-30
 last_updated: 2026-06-30
 owner: amjadjibon
@@ -21,9 +21,11 @@ Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished,
 - **REQ-003**: The incident detail page must use tabs (e.g. Overview, RCA, Event, Raw) so the page is scannable instead of one long column.
 - **REQ-004**: RCA text fields (`Summary`, `RootCause`, `Remediation`) must render as Markdown (headings, lists, code, bold) rather than raw text.
 - **REQ-007**: The incident list must be paginated (the store currently caps at 100 and there is no way to page further); the user can move between pages, and the summary stat counts must reflect all incidents, not just the visible page.
+- **REQ-008**: The incident list must support filtering by phase, namespace, and reason, plus a free-text search across name/message/reason; filters compose with pagination (page links preserve the active filters) and with the stat counts.
 - **REQ-005**: The UI must use a deliberate type system — a clean UI sans-serif (e.g. Inter) and a monospace (e.g. JetBrains Mono) for code/identifiers — loaded via CDN.
 - **REQ-006**: The live SSE phase updates on the detail page must keep working after the markup/CSS changes.
 - **SEC-001**: RCA Markdown originates from the LLM and is untrusted; it must be sanitized (HTML-escaped/allowlisted) before being injected into the page. No raw `@templ.Raw` of unsanitized model output.
+- **SEC-002**: All filter/search inputs reach SQL; queries must be fully parameterized (placeholders + args), never string-concatenated values, and rendered filter values must be HTML-escaped in the form controls.
 - **CON-001**: Stay on templ + HTMX, server-rendered, CDN assets only — no npm/bundler/JS build step.
 - **CON-002**: CON-003 (repo-wide): no `encoding/json` in application code; use `github.com/bytedance/sonic` if JSON is needed (unlikely here).
 - **CON-003**: `make templ` output is committed and must be reproducible (rerun → no git diff).
@@ -214,6 +216,53 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 ---
 
+### Phase 5: Search & Filtering
+
+**Goal**: Let users narrow the incident list by phase, namespace, and reason, and free-text search across name/message/reason — composing cleanly with the Phase 4 pagination and stat counts.
+
+**Depends on**: Phase 4 complete
+
+- [ ] TASK-020: In `internal/store/sqlite.go` define an `IncidentFilter` struct (`Phase`, `Namespace`, `Reason`, `Query string`) and evolve the Phase 4 reads to honour it: `ListIncidentsPage(ctx, filter, limit, offset)`, `CountIncidents(ctx, filter) (int, error)` (total matching, for the pager), and `CountIncidentsByPhase(ctx, filter)` — build the `WHERE` clause dynamically from the non-empty filter fields using parameter placeholders and an args slice (SEC-002), with `Query` matched via `LIKE %?%` across `name`, `message`, and `reason`.
+- [ ] TASK-021: For the stat cards, apply every filter field EXCEPT `Phase` when computing `CountIncidentsByPhase`, so the per-phase cards stay populated and act as phase toggles even while a phase is selected.
+- [ ] TASK-022: In `internal/web/server.go`, parse `?phase=`, `?namespace=`, `?reason=`, `?q=` (plus the Phase 4 `?page=`), build the `store.IncidentFilter`, fetch the filtered page + filtered total + per-phase counts, and pass the active filter values to the template. Reset to page 1 when filters change.
+- [ ] TASK-023: In `internal/web/templates/incidents.templ`, add a filter bar — a GET form with a search input (`q`), a phase `<select>`, and namespace/reason inputs (prefilled with current values, HTML-escaped) and a Clear link; make the stat cards clickable phase filters (`/?phase=<P>&...keep other filters`); and ensure the pagination links carry the current filter query string.
+- [ ] TASK-024: Run `make templ`; add `internal/store` tests (filter by phase, by namespace, by free-text `q`; combined filter + paging; filtered counts) and an `internal/web` test (applying `?phase=Failed` returns only Failed rows; pagination + stat-card links preserve filters).
+
+**Completion criteria**: `go test ./internal/store ./internal/web` passes (filter, free-text, filtered counts, filter-preserving pager); `make templ` reproducible; `go build ./...` and `go vet ./...` pass; `/?phase=Failed&q=image` narrows the list and the pager/stat links keep the filter.
+
+**git commit**: `git add -u && git commit -m "feat: search and filter incidents"`
+
+**Agent Prompt**:
+```
+You are a sub-agent implementing Phase 5 of dashboard-ui.
+
+Context: kscribe's web dashboard (internal/web, templ + HTMX) has a themed shell, a paginated incident list with DB-side phase stat counts (Phase 4), and a tabbed Markdown detail view. This phase adds filtering (phase/namespace/reason) and free-text search, composing with the existing pagination and counts. The read model is SQLite (internal/store); all inputs reach SQL so queries MUST be parameterized.
+
+Branch: dashboard-ui-phase-5  |  Base: dashboard-ui-phase-4
+
+Tasks:
+- TASK-020: In internal/store/sqlite.go define `type IncidentFilter struct { Phase, Namespace, Reason, Query string }` and update the Phase 4 reads to take it: `ListIncidentsPage(ctx, filter IncidentFilter, limit, offset int)`, `CountIncidents(ctx, filter IncidentFilter) (int, error)`, `CountIncidentsByPhase(ctx, filter IncidentFilter) (map[string]int, error)`. Build the WHERE clause from non-empty fields using ? placeholders and an []any args slice — never interpolate values (SEC-002). Match Query with LIKE against name, message, and reason (e.g. `(name LIKE ? OR message LIKE ? OR reason LIKE ?)` with `%q%`). Keep filterable columns: phase, namespace, reason, message, name (all exist in the incidents table; phase and namespace/name are indexed).
+- TASK-021: When computing CountIncidentsByPhase, apply all filter fields EXCEPT Phase, so the per-phase stat cards stay populated and usable as phase toggles while a phase is selected.
+- TASK-022: In internal/web/server.go parse query params phase, namespace, reason, q (plus page from Phase 4), build store.IncidentFilter, fetch the filtered page + CountIncidents (for last-page math) + CountIncidentsByPhase, and pass current filter values to the template. Keep route/200/Content-Type unchanged.
+- TASK-023: In internal/web/templates/incidents.templ add a filter bar: a GET <form> with a text search (name="q"), a phase <select> (options: all + each phase), and namespace/reason text inputs, all prefilled with the current (HTML-escaped) values, plus a Clear link back to /. Make the stat cards anchor to /?phase=<P> while preserving the other active filters. Make the Phase 4 pagination Prev/Next links include the current filter query string. Style with Phase 1 tokens.
+- TASK-024: Run `make templ`. Add internal/store tests: filter by phase, by namespace, by free-text q (matches message and name), combined filter+paging, and filtered counts. Add an internal/web test: GET /?phase=Failed returns only Failed incidents, and the rendered pager + stat-card links carry the active filters.
+
+Key files:
+- internal/store/sqlite.go — IncidentFilter + filtered list/count queries (parameterized).
+- internal/store/sqlite_test.go — filter + free-text + filtered-count tests.
+- internal/web/server.go — parse filter params, build IncidentFilter, fetch filtered data.
+- internal/web/templates/incidents.templ — filter bar, clickable stat cards, filter-preserving pagination (+ generated _templ.go via make templ).
+- internal/web/server_test.go — filter + filter-preserving-pager assertions.
+
+Completion criteria: `go test ./internal/store ./internal/web` passes (filter, free-text, filtered counts, filter-preserving pager); `make templ` reproducible; `go build ./...` and `go vet ./...` pass; /?phase=Failed&q=image narrows the list and the pager/stat links keep the filter.
+
+When done: git add -u && git commit -m "feat: search and filter incidents" — no Co-authored-by
+Write a one-paragraph summary of changes and commit SHA.
+Do NOT push, open PRs, or modify PLAN.md.
+```
+
+---
+
 ## 3. Testing
 
 - [ ] TEST-001: `go test ./internal/web` — routes return 200/404 as before, Content-Type `text/html`, phase strings present (existing assertions stay green).
@@ -222,6 +271,8 @@ Do NOT push, open PRs, or modify PLAN.md.
 - [ ] TEST-004: `go test ./internal/web` — detail page still contains the SSE `sse-connect` attribute (REQ-006).
 - [ ] TEST-008: `go test ./internal/store` — paging returns the correct slice for page 2 and empty past the end; `CountIncidentsByPhase` returns correct totals (Phase 4).
 - [ ] TEST-009: `go test ./internal/web` — with more incidents than one page, the list renders pagination controls with the right "Page X of Y" and stat counts reflect totals, not the page (Phase 4, REQ-007).
+- [ ] TEST-010: `go test ./internal/store` — filtering by phase/namespace and free-text `q` (matching name/message/reason) returns the expected rows; filtered counts are correct (Phase 5, SEC-002).
+- [ ] TEST-011: `go test ./internal/web` — `GET /?phase=Failed` returns only Failed incidents, and the rendered pagination + stat-card links preserve the active filter query string (Phase 5, REQ-008).
 - [ ] TEST-005: `make templ && git diff --exit-code` — generated templ output is reproducible.
 - [ ] TEST-006: `make build` — operator binary still builds with the new web assets.
 - [ ] TEST-007: Manual — run `scripts/local-test.sh` (or port-forward an existing install), open `/`, confirm: theme toggle (light/dark/system) persists; list shows stat cards; a `Done` incident's detail page shows tabs and Markdown-rendered RCA; SSE phase updates live.
@@ -237,3 +288,5 @@ Do NOT push, open PRs, or modify PLAN.md.
 - **ASSUMPTION-003**: CDN font/asset loading is acceptable (consistent with the existing Pico/HTMX CDN usage); no self-hosting/offline requirement for the dashboard in this iteration.
 - **ASSUMPTION-004**: Phase branches use the hyphenated form `dashboard-ui-phase-N` (not `dashboard-ui/phase-N`) to avoid a git ref D/F conflict with the `dashboard-ui` plan branch.
 - **ASSUMPTION-005**: Offset-based pagination with a fixed 25-row page size is sufficient for the dashboard; cursor/keyset pagination is deferred (incident counts are modest and `updated_at DESC` ordering tolerates offset paging for an MVP). Phase 2's stat cards are reworked in Phase 4 to use DB-side phase-count totals so they stay correct once only one page is loaded.
+- **RISK-005**: Filter inputs are a SQL-injection surface — mitigation: dynamic `WHERE` built only from placeholders + an args slice, with a store test exercising a quote/`OR 1=1`-style value to prove it is treated as a literal (SEC-002).
+- **ASSUMPTION-006**: Filtering is server-side via SQL with a plain GET form (shareable/bookmarkable URLs), not client-side JS; the per-phase stat cards double as one-click phase filters and therefore ignore the active `Phase` filter when counting.
