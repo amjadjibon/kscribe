@@ -1,6 +1,6 @@
 ---
 goal: Dashboard UI refresh — themes, tabs, markdown RCA, better styling
-version: 1.4
+version: 1.5
 date_created: 2026-06-30
 last_updated: 2026-06-30
 owner: amjadjibon
@@ -42,8 +42,8 @@ Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished,
 **Goal**: Establish the asset-serving foundation and visual system everything else builds on — self-host JS/CSS/icons in a repo-root `public/` directory served via `go:embed`, plus fonts, a CSS design-token system, light/dark/system theming (Alpine), and a dashboard layout shell.
 
 - [ ] TASK-001: Create the repo-root `public/` tree: `public/css/app.css` (the design system — see TASK-004), `public/js/` with vendored `alpine.min.js`, `htmx.min.js`, and `htmx-sse.min.js` (download the pinned minified releases), and `public/icons/` with a `favicon.svg` (and any UI icons). Self-host these instead of CDN.
-- [ ] TASK-002: Add a repo-root `embed.go` (`package kscribe`, module root) with `//go:embed all:public` exposing `var PublicFS embed.FS`. (Embedding must live at the module root because `go:embed` cannot reference `../public` from `internal/web`.)
-- [ ] TASK-003: In `internal/web/server.go`, mount the embedded assets: derive a sub-FS rooted at `public/` (`fs.Sub(kscribe.PublicFS, "public")`) and serve it at `/static/*` via `http.FileServer(http.FS(sub))` with a long `Cache-Control` header. Add the `internal/web` → root-package import.
+- [ ] TASK-002: Add `public/embed.go` (`package public`) with `//go:embed all:css all:js all:icons` exposing `var FS embed.FS`. Placing the embed file inside `public/` (its own package) embeds its sibling `css/`, `js/`, `icons/` directories directly and avoids a root-package name collision with the build-tagged `tools.go` (`package tools`). The FS root therefore contains `css/`, `js/`, `icons/` with no `public/` prefix.
+- [ ] TASK-003: In `internal/web/server.go`, mount the embedded assets: serve `public.FS` at `/static/*` via `http.StripPrefix("/static/", http.FileServer(http.FS(public.FS)))` with a long `Cache-Control` header (no `fs.Sub` needed — the embed root is already the `public/` contents). Add the `github.com/amjadjibon/kscribe/public` import.
 - [ ] TASK-004: Author `public/css/app.css` as the design system: CSS custom properties (colors, spacing, radius, shadow, fonts), a `[data-theme="dark"]` override set, a `@media (prefers-color-scheme: dark)` fallback, the dashboard shell styles, and token-based phase badge styles. Keep the existing badge class names (`badge`, `badge-pending`, `badge-diagnosing`, `badge-done`, `badge-partial`, `badge-failed`) so `PhaseBadge` and the SSE fragment keep working. Drop the Pico CDN and the inline `<style>`/`.badge-*` block from `layout.templ`.
 - [ ] TASK-005: Rewrite `layout.templ` to reference local assets — `<link rel="stylesheet" href="/static/css/app.css">`, `<script defer src="/static/js/alpine.min.js">`, `htmx.min.js`, `htmx-sse.min.js`, and `<link rel="icon" href="/static/icons/favicon.svg">` — plus the font links (Inter + JetBrains Mono; CDN `@font-face` is acceptable, or self-host under `public/fonts/`). Restructure `Layout` into a dashboard shell: a top bar with the `kscribe` brand and an Alpine theme toggle (Light/Dark/System) and a styled `<main>`. Keep the signature `templ Layout(title string, content templ.Component)`.
 - [ ] TASK-006: Implement theming with Alpine (CON-005): an `Alpine.store('theme')` persisting to `localStorage`, resolving `system` via `matchMedia`, setting `data-theme` on `<html>`. Keep ONE tiny inline pre-Alpine `<script>` in `<head>` that applies the stored `data-theme` before first paint (FOUC); Alpine owns the toggle after load.
@@ -51,7 +51,7 @@ Rework the kscribe web dashboard (`internal/web`, templ + HTMX) into a polished,
 
 **Completion criteria**: `make templ` reproducible; `go build ./...` and `go test ./internal/web` pass; `GET /static/css/app.css` and `GET /static/js/alpine.min.js` return 200 from the embedded FS; `/` renders the themed shell from `/static/css/app.css` and the toggle switches Light/Dark/System and persists across reload.
 
-**git commit**: `git add -u && git add public embed.go && git commit -m "feat: serve embedded static assets and dashboard shell"`
+**git commit**: `git add -u && git add public && git commit -m "feat: serve embedded static assets and dashboard shell"`
 
 **Agent Prompt**:
 ```
@@ -63,8 +63,8 @@ Branch: dashboard-ui-phase-1  |  Base: main
 
 Tasks:
 - TASK-001: Create repo-root public/ : public/css/app.css; public/js/ with vendored minified alpine.min.js (Alpine v3), htmx.min.js (v2), htmx-sse.min.js — fetch the pinned upstream minified files and commit them; public/icons/favicon.svg.
-- TASK-002: Create repo-root embed.go with `package kscribe`, `import "embed"`, and `//go:embed all:public` exposing `var PublicFS embed.FS`. It MUST be at the module root — go:embed cannot reach ../public from internal/web.
-- TASK-003: In internal/web/server.go mount the assets: `sub, _ := fs.Sub(kscribe.PublicFS, "public")` then `r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))` with a Cache-Control header (e.g. max-age=3600). Import the root package github.com/amjadjibon/kscribe.
+- TASK-002: Create public/embed.go with `package public`, `import "embed"`, and `//go:embed all:css all:js all:icons` exposing `var FS embed.FS`. Put it INSIDE public/ (its own package) — this embeds the sibling css/js/icons dirs and avoids a root-package name clash with the existing build-tagged tools.go (package tools). The embedded FS has css/, js/, icons/ at its root (no public/ prefix). The css/js/icons subdirs must already contain files (from TASK-001) or the embed won't compile.
+- TASK-003: In internal/web/server.go mount the assets: `r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(public.FS))))` with a Cache-Control header (e.g. max-age=3600). No fs.Sub is needed since the embed root is already the public/ contents. Import github.com/amjadjibon/kscribe/public.
 - TASK-004: Author public/css/app.css as the design system: CSS custom properties (colors/spacing/radius/shadow/fonts), [data-theme="dark"] overrides, @media (prefers-color-scheme: dark) fallback, dashboard shell styles, and phase badge styles reusing class names badge/badge-pending/badge-diagnosing/badge-done/badge-partial/badge-failed. Remove the Pico CDN link and the inline <style> block from layout.templ.
 - TASK-005: Rewrite internal/web/templates/layout.templ to reference local assets: <link rel=stylesheet href=/static/css/app.css>, <script defer src=/static/js/alpine.min.js>, htmx.min.js, htmx-sse.min.js, <link rel=icon href=/static/icons/favicon.svg>, plus Inter + JetBrains Mono font links (CDN @font-face acceptable). Restructure Layout into a dashboard shell (top bar with brand + Alpine theme toggle, styled <main>). Keep signature `templ Layout(title string, content templ.Component)` and render content with @content.
 - TASK-006: Theming via Alpine (Alpine.store('theme') + localStorage + matchMedia for system, sets data-theme on <html>); keep ONE inline pre-paint <script> in <head> to apply stored data-theme before first paint (avoid FOUC). Alpine and HTMX must coexist.
@@ -72,14 +72,14 @@ Tasks:
 
 Key files:
 - public/css/app.css, public/js/*.min.js, public/icons/favicon.svg — new vendored assets.
-- embed.go (repo root, package kscribe) — //go:embed all:public.
-- internal/web/server.go — /static/* file server from the embedded sub-FS; import the root package.
+- public/embed.go (package public) — //go:embed all:css all:js all:icons exposing var FS embed.FS.
+- internal/web/server.go — /static/* file server from public.FS; import github.com/amjadjibon/kscribe/public.
 - internal/web/templates/layout.templ (+ layout_templ.go via make templ) — local asset refs, Alpine theme toggle, dashboard shell.
 - internal/web/server_test.go — add the /static asset 200 test; keep existing assertions green.
 
 Completion criteria: `make templ` reproducible; `go build ./...` and `go test ./internal/web` pass; GET /static/css/app.css and /static/js/alpine.min.js return 200 from the embedded FS; / renders the themed shell from the embedded CSS and the toggle switches Light/Dark/System and persists.
 
-When done: git add -u && git add public embed.go && git commit -m "feat: serve embedded static assets and dashboard shell" — no Co-authored-by
+When done: git add -u && git add public && git commit -m "feat: serve embedded static assets and dashboard shell" — no Co-authored-by
 Write a one-paragraph summary of changes and commit SHA.
 Do NOT push, open PRs, or modify PLAN.md.
 ```
@@ -295,7 +295,7 @@ Do NOT push, open PRs, or modify PLAN.md.
 - **ASSUMPTION-002**: Server-side Markdown (goldmark + bluemonday) is preferred over client-side JS rendering — it is testable, works without client JS, and keeps untrusted HTML sanitization on the server. Two small pure-Go deps are acceptable here. (Alpine handles UI interactivity; content rendering/sanitization stays server-side.)
 - **ASSUMPTION-007**: Alpine.js v3, vendored under `public/js/` and loaded with `<script defer>`, is the client interactivity layer for all stateful UI (theme, tabs, filter-bar niceties) per CON-005; it adds no build step and coexists with HTMX. Actual data operations (filtering, pagination) remain server-side GET requests so URLs stay shareable and testable.
 - **ASSUMPTION-003**: App assets (JS/CSS/icons) are self-hosted and embedded via `go:embed` for an offline/air-gapped-friendly, dependency-free binary; only web fonts may remain on a CDN (vendor them under `public/fonts/` later if full offline is required).
-- **ASSUMPTION-008**: The `public/` directory lives at the module root and is embedded by a root-level `embed.go` (`package kscribe`) because `go:embed` cannot reference paths outside its package directory; `internal/web` imports the root package for the FS. Vendored JS (Alpine/HTMX/htmx-sse) are committed minified files, pinned to specific upstream versions.
+- **ASSUMPTION-008**: The `public/` directory lives at the module root, and the embed file is `public/embed.go` (`package public`) embedding its sibling `css/ js/ icons/` dirs — deliberately NOT a root-level file, to avoid a package-name collision with the build-tagged `tools.go` (`package tools`) at the module root. `internal/web` imports `github.com/amjadjibon/kscribe/public` for the FS; no `fs.Sub` is needed since the embed root is the `public/` contents. Vendored JS (Alpine/HTMX/htmx-sse) are committed minified files, pinned to specific upstream versions.
 - **ASSUMPTION-004**: Phase branches use the hyphenated form `dashboard-ui-phase-N` (not `dashboard-ui/phase-N`) to avoid a git ref D/F conflict with the `dashboard-ui` plan branch.
 - **ASSUMPTION-005**: Offset-based pagination with a fixed 25-row page size is sufficient for the dashboard; cursor/keyset pagination is deferred (incident counts are modest and `updated_at DESC` ordering tolerates offset paging for an MVP). Phase 2's stat cards are reworked in Phase 4 to use DB-side phase-count totals so they stay correct once only one page is loaded.
 - **RISK-005**: Filter inputs are a SQL-injection surface — mitigation: dynamic `WHERE` built only from placeholders + an args slice, with a store test exercising a quote/`OR 1=1`-style value to prove it is treated as a literal (SEC-002).

@@ -1,20 +1,21 @@
 ---
 date: 2026-06-30
 plan: docs/dashboard-ui/PLAN.md
-plan_version: 1.4
+plan_version: 1.5
 reviewer: Claude
-verdict: Needs Revision
+verdict: Ready
 ---
 
 # Plan Review: dashboard-ui
 
 ## Verdict
 
-**Needs Revision** — the plan is well-structured and the hard parts (SSE preservation, XSS sanitization, SQL-injection safety) are handled, but the root-level `go:embed` package will silently collide with the existing build-tagged `tools.go`, which must be resolved before Phase 1 ships.
+**Ready** — the one blocking-tier finding (REVISE-001, the root-embed/`tools.go` package collision) has been resolved in plan v1.5 by moving the embed into `public/embed.go` (`package public`). Four non-blocking suggestions remain.
 
 ## Findings
 
-### [REVISE-001] Root `embed.go` package collides with `tools.go` under `-tags tools`
+### [REVISE-001] Root `embed.go` package collides with `tools.go` under `-tags tools` — RESOLVED in v1.5
+**Status**: Resolved — TASK-002 now places the embed in `public/embed.go` (`package public`, embedding sibling `css/ js/ icons/`), so there is no root-package file to collide with `tools.go`. No `fs.Sub` needed.
 **Phase**: 1 (TASK-002)
 **Issue**: The module root already contains `tools.go`, which declares `package tools` behind `//go:build tools`. TASK-002 adds a root `embed.go` as `package kscribe` with **no build constraint**. Under a normal build the two never coexist (tools.go is excluded), so `go build ./...`, `make templ`, and the current CI all pass — which is exactly why this is dangerous: the plan's completion criteria go green while the defect is latent. But any build that sets the `tools` tag over the root package (`go vet -tags tools ./...`, `go test -tags tools ./...`, and most editor/gopls analysis) compiles `embed.go` (always included) **and** `tools.go` (included under the tag) together, yielding `found packages kscribe (embed.go) and tools (tools.go) in <root>`. The agent will likely never notice because its CLI checks pass, and the breakage surfaces later as red IDE errors or a future tagged build.
 **Fix**: Unify the root package name. Add a task to Phase 1: change `tools.go` to `package kscribe` (it only holds blank tool imports; the name is irrelevant to its function), so both files agree under every tag combination. Alternatively, keep the embed file out of the root package entirely by moving it (and `public/`) under a dedicated subpackage — but that conflicts with the stated "repo-root `public/`" requirement, so renaming `tools.go`'s package is the lower-friction fix. Either way, state explicitly in TASK-002 that the root directory must resolve to a single package name across `-tags tools`.
@@ -60,9 +61,9 @@ The architectural decisions carry rationale rather than assertion: server-side M
 ## Machine-Readable Verdict
 
 ```yaml
-verdict: Needs Revision
+verdict: Ready
 block: 0
-revise: 1
+revise: 0
 suggest: 4
 blocking_ids: []
 ```
