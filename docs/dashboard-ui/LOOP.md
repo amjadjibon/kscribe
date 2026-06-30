@@ -8,7 +8,7 @@ max_phases: 6
 max_agents: 3
 current_iteration: 1
 status: running
-last_review_base: ''
+last_review_base: 'aec6c1a'
 ---
 
 # Dev Loop: dashboard-ui
@@ -39,6 +39,6 @@ last_review_base: ''
 
 ### Iteration 1
 - [x] implement-plan (sequential, 6 phases)
-- [ ] qa
+- [x] qa (internal/web 87.5%->96.6%, +edge/sanitization tests, no bugs)
 - [ ] code-review
 - [ ] decide
