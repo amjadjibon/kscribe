@@ -11,6 +11,7 @@ import (
 
 	"github.com/amjadjibon/kscribe/internal/store"
 	"github.com/amjadjibon/kscribe/internal/web/templates"
+	"github.com/amjadjibon/kscribe/public"
 )
 
 // StoreReader is the subset of store.Store the web server needs.
@@ -37,6 +38,12 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/", s.list)
 	r.Get("/incidents/{namespace}/{name}", s.detail)
 	r.Get("/incidents/{namespace}/{name}/stream", s.stream)
+	// ponytail: inline cache header wrapper — no middleware stack needed for a single route
+	static := http.FileServer(http.FS(public.FS))
+	r.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		static.ServeHTTP(w, r)
+	})))
 	return r
 }
 
