@@ -200,6 +200,36 @@ func TestStaticAssets(t *testing.T) {
 	}
 }
 
+func TestListStatCards(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	if !strings.Contains(body, "stat-cards") {
+		t.Error("want stat-cards section in list page")
+	}
+	// seedStore has 1 Done, 1 Partial, 1 Failed, 0 Diagnosing, 0 Pending.
+	// Each stat card renders a stat-card-count span with the integer value.
+	// Five phase cards total.
+	if got := strings.Count(body, "stat-card-count"); got != 5 {
+		t.Errorf("want 5 stat-card-count spans, got %d", got)
+	}
+	// Phases that should show count 1 (Done, Partial, Failed).
+	for _, phase := range []string{"Done", "Partial", "Failed"} {
+		if !strings.Contains(body, "stat-card-label\">"+phase+"<") {
+			t.Errorf("want stat-card label %q in body", phase)
+		}
+	}
+}
+
 func TestSSE(t *testing.T) {
 	ts, broker := newTestServer(t)
 	defer ts.Close()

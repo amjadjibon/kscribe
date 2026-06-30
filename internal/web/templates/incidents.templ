@@ -10,11 +10,28 @@ templ PhaseBadge(phase string) {
 	<span class={ "badge", phaseBadgeClass(phase) }>{ phase }</span>
 }
 
+// StatCards renders a row of per-phase count cards.
+templ StatCards(incidents []store.Incident) {
+	<div class="stat-cards">
+		for _, p := range []string{"Done", "Diagnosing", "Failed", "Partial", "Pending"} {
+			<div class={ "stat-card", phaseCardClass(p) }>
+				<span class="stat-card-label">{ p }</span>
+				<span class="stat-card-count">{ fmt.Sprintf("%d", phaseCount(incidents, p)) }</span>
+			</div>
+		}
+	</div>
+}
+
 // IncidentList renders the dashboard list page.
 templ IncidentList(incidents []store.Incident) {
-	<h2>Incidents</h2>
+	<div class="page-header">
+		<h2>Incidents</h2>
+	</div>
+	@StatCards(incidents)
 	if len(incidents) == 0 {
-		<p>No incidents yet.</p>
+		<div class="empty-state">
+			<p>No incidents yet.</p>
+		</div>
 	} else {
 		<table>
 			<thead>
@@ -30,14 +47,14 @@ templ IncidentList(incidents []store.Incident) {
 				for _, inc := range incidents {
 					<tr>
 						<td>
-							<a href={ templ.SafeURL("/incidents/" + inc.Namespace + "/" + inc.Name) }>
+							<a href={ templ.SafeURL("/incidents/" + inc.Namespace + "/" + inc.Name) } style="font-family: var(--font-mono); font-size: var(--text-sm)">
 								{ inc.Namespace }/{ inc.Name }
 							</a>
 						</td>
-						<td>{ inc.InvolvedObjectKind }/{ inc.InvolvedObjectName }</td>
+						<td style="font-family: var(--font-mono); font-size: var(--text-sm)">{ inc.InvolvedObjectKind }/{ inc.InvolvedObjectName }</td>
 						<td>{ inc.Reason }</td>
 						<td>@PhaseBadge(inc.Phase)</td>
-						<td>{ inc.UpdatedAt.Format("2006-01-02 15:04:05") }</td>
+						<td style="color: var(--c-text-muted); font-size: var(--text-sm)">{ inc.UpdatedAt.Format("2006-01-02 15:04") }</td>
 					</tr>
 				}
 			</tbody>
@@ -127,4 +144,31 @@ func phaseBadgeClass(phase string) string {
 	default:
 		return "badge-pending"
 	}
+}
+
+// phaseCardClass maps a phase string to its stat-card CSS class.
+func phaseCardClass(phase string) string {
+	switch phase {
+	case "Done":
+		return "stat-card-done"
+	case "Partial":
+		return "stat-card-partial"
+	case "Failed":
+		return "stat-card-failed"
+	case "Diagnosing":
+		return "stat-card-diagnosing"
+	default:
+		return "stat-card-pending"
+	}
+}
+
+// phaseCount returns the number of incidents in the given phase.
+func phaseCount(incidents []store.Incident, phase string) int {
+	n := 0
+	for _, inc := range incidents {
+		if inc.Phase == phase {
+			n++
+		}
+	}
+	return n
 }
