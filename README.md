@@ -85,6 +85,21 @@ helm upgrade --install kscribe ./charts/kscribe \
 
 `llm.baseURL` overrides the endpoint for any other OpenAI-compatible server.
 
+### Local end-to-end smoke test
+
+`scripts/local-test.sh` runs the whole loop on a local cluster (minikube or
+colima/k3s): build → load image → `helm install` → fire failing pods → wait for
+diagnoses → print RCAs → clean up.
+
+```sh
+# defaults target LM Studio at http://192.168.100.37:1234/v1
+LLM_BASE_URL=http://<host>:1234/v1 LLM_MODEL=google/gemma-4-e4b scripts/local-test.sh
+
+KEEP=1 scripts/local-test.sh        # leave it running afterwards
+SKIP_BUILD=1 scripts/local-test.sh  # reuse the image already in the cluster
+UNINSTALL=1 scripts/local-test.sh   # helm uninstall at the end
+```
+
 ---
 
 ## Custom Resource examples
