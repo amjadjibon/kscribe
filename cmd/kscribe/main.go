@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -154,6 +155,12 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				return fmt.Errorf("setup event watcher: %w", err)
 			}
 
+			// Build a native clientset for log streaming and tool calls.
+			kcs, err := kubernetes.NewForConfig(restCfg)
+			if err != nil {
+				return fmt.Errorf("build kubernetes clientset: %w", err)
+			}
+
 			// KscribeDiagnosis reconciler.
 			reconciler := &controller.KscribeDiagnosisReconciler{
 				Client:        mgr.GetClient(),
@@ -164,8 +171,8 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				MaxIter:       cfg.MaxIterations,
 				Concurrency:   cfg.DiagnosisConcurrency,
 				Tools:         agent.KubeTools(),
-				// ponytail: ToolExecutor nil — tool calls return a stub error; wire a
-				// kubernetes.NewForConfig(restCfg) executor when enricher tools are ready.
+				KubeClient:    kcs,
+				ToolExecutor:  &controller.KubeToolExecutor{Client: mgr.GetClient(), Kube: kcs},
 			}
 			if err := reconciler.SetupWithManager(mgr); err != nil {
 				return fmt.Errorf("setup diagnosis reconciler: %w", err)

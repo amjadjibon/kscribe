@@ -280,6 +280,102 @@ func TestReconcile_PublishesOnSuccess(t *testing.T) {
 	}
 }
 
+// TestReconcile_ToolCallInvokedAndReachsDone proves that when the provider issues a tool call,
+// the executor is invoked and the final CR still reaches Done (executor is wired).
+func TestReconcile_ToolCallInvokedAndReachsDone(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-tool", "default")
+	fc := buildClient(scheme, kd).Build()
+
+	// spyExecutor records that Execute was called; always returns a safe string.
+	spy := &spyExecutor{result: "log output"}
+
+	// toolCallProvider: first call returns a tool-call message; second returns RCA.
+	tcProv := &toolCallProvider{
+		toolResp: agent.Response{
+			Choices: []agent.Choice{{
+				Message: agent.Message{
+					Role: "assistant",
+					ToolCalls: []agent.ToolCall{{
+						ID:   "tc-1",
+						Type: "function",
+						Function: agent.FunctionCall{
+							Name:      "get_pod_logs",
+							Arguments: `{"namespace":"default","pod":"pod-1"}`,
+						},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: agent.Usage{TotalTokens: 10},
+		},
+		rcaResp: agent.Response{
+			Choices: []agent.Choice{{
+				Message:      agent.Message{Role: "assistant", Content: goodRCA},
+				FinishReason: "stop",
+			}},
+			Usage: agent.Usage{TotalTokens: 20},
+		},
+	}
+
+	st := &fakeStore{}
+	r := &controller.KscribeDiagnosisReconciler{
+		Client:        fc,
+		Scheme:        scheme,
+		Store:         st,
+		AgentProvider: tcProv,
+		ToolExecutor:  spy,
+		Tools:         agent.KubeTools(),
+		MaxIter:       5,
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-tool", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+
+	if spy.calls == 0 {
+		t.Fatal("expected executor to be invoked for tool call; got 0 calls")
+	}
+
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-tool", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhaseDone {
+		t.Fatalf("want Done, got %s", got.Status.Phase)
+	}
+}
+
+// spyExecutor records Execute invocations and returns a fixed result.
+type spyExecutor struct {
+	calls  int
+	result string
+}
+
+func (s *spyExecutor) Execute(_ context.Context, _, _ string) (string, error) {
+	s.calls++
+	return s.result, nil
+}
+
+// toolCallProvider returns toolResp on first Complete, rcaResp on subsequent calls.
+type toolCallProvider struct {
+	toolResp agent.Response
+	rcaResp  agent.Response
+	called   int
+}
+
+func (p *toolCallProvider) Complete(_ context.Context, _ agent.Request) (agent.Response, error) {
+	p.called++
+	if p.called == 1 {
+		return p.toolResp, nil
+	}
+	return p.rcaResp, nil
+}
+
 // TestReconcile_IdempotentOnNonPending proves the reconciler skips CRs not in Pending/empty phase.
 func TestReconcile_IdempotentOnNonPending(t *testing.T) {
 	scheme := testScheme()
