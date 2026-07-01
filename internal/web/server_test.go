@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
+
+	"github.com/amjadjibon/kscribe/internal/enricher"
 	"github.com/amjadjibon/kscribe/internal/store"
 	"github.com/amjadjibon/kscribe/internal/web"
 )
@@ -395,6 +398,167 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// mustJSON marshals v with sonic or panics — test helper only.
+func mustJSON(v any) []byte {
+	b, err := sonic.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// TestDetailContextAndReasoning asserts that the Context and Reasoning tabs are
+// rendered and contain seeded data from context_json, trace_json, and reasoning. TASK-010.
+func TestDetailContextAndReasoning(t *testing.T) {
+	now := time.Now().UTC()
+
+	snap := &enricher.Snapshot{
+		Namespace:  "default",
+		ObjectName: "my-pod",
+		PodContexts: []enricher.PodContext{{
+			PodName:  "my-pod-abc",
+			NodeName: "node-1",
+			Phase:    "Running",
+			Logs: []enricher.PodLog{{
+				ContainerName: "app",
+				Lines:         "INFO: unique-log-marker-42 startup complete",
+			}},
+		}},
+	}
+	ctxJSON, _ := enricher.EncodeSnapshot(snap)
+
+	type traceStep struct {
+		Tool   string `json:"tool"`
+		Args   any    `json:"args"`
+		Result any    `json:"result"`
+	}
+	traceJSON := mustJSON([]traceStep{{
+		Tool:   "get_pod_logs",
+		Args:   map[string]string{"pod": "my-pod-abc"},
+		Result: "INFO: unique-log-marker-42 startup complete",
+	}})
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/ctx-incident": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "ctx-incident",
+				InvolvedObjectKind: "Pod", InvolvedObjectName: "my-pod", InvolvedObjectNamespace: "default",
+				Reason: "CrashLoopBackOff", Message: "container keeps crashing",
+				Phase: "Done", CreatedAt: now, UpdatedAt: now,
+			},
+			Diagnoses: []store.Diagnosis{{
+				ID:          10,
+				Namespace:   "default",
+				Name:        "ctx-incident",
+				Summary:     "pod crashes on startup",
+				RootCause:   "OOM",
+				Remediation: "increase memory",
+				Confidence:  0.88,
+				Reasoning:   "## Analysis\nThe pod OOMed based on the logs.",
+				ContextJSON: ctxJSON,
+				TraceJSON:   traceJSON,
+				CreatedAt:   now,
+			}},
+		},
+	}}
+
+	broker := web.NewBroker()
+	srv := web.New(st, broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/ctx-incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Context tab button exists.
+	if !strings.Contains(body, "tab='context'") {
+		t.Error("want Context tab button in page")
+	}
+	// Reasoning tab button exists.
+	if !strings.Contains(body, "tab='reasoning'") {
+		t.Error("want Reasoning tab button in page")
+	}
+	// Pod log line appears (rendered in Context tab).
+	if !strings.Contains(body, "unique-log-marker-42") {
+		t.Error("want seeded log line in rendered page")
+	}
+	// Tool name appears (rendered in Reasoning/trace).
+	if !strings.Contains(body, "get_pod_logs") {
+		t.Error("want tool name 'get_pod_logs' in rendered page")
+	}
+}
+
+// TestDetailContextXSS asserts that an XSS payload in context_json/reasoning is
+// escaped or stripped before it reaches the browser. SEC-001.
+func TestDetailContextXSS(t *testing.T) {
+	now := time.Now().UTC()
+
+	snap := &enricher.Snapshot{
+		Namespace:  "default",
+		ObjectName: "xss-pod",
+		PodContexts: []enricher.PodContext{{
+			PodName:  "xss-pod-1",
+			NodeName: "node-1",
+			Phase:    "Running",
+			Logs: []enricher.PodLog{{
+				ContainerName: "app",
+				Lines:         `<script>alert(1)</script>`, // XSS in log line
+			}},
+		}},
+	}
+	ctxJSON, _ := enricher.EncodeSnapshot(snap)
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/xss2-incident": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "xss2-incident",
+				InvolvedObjectKind: "Pod", InvolvedObjectName: "xss-pod", InvolvedObjectNamespace: "default",
+				Reason: "Test", Message: "xss",
+				Phase: "Done", CreatedAt: now, UpdatedAt: now,
+			},
+			Diagnoses: []store.Diagnosis{{
+				ID:          20,
+				Namespace:   "default",
+				Name:        "xss2-incident",
+				Summary:     "test",
+				Confidence:  0.5,
+				Reasoning:   `<script>alert(2)</script>`, // XSS in reasoning
+				ContextJSON: ctxJSON,
+				CreatedAt:   now,
+			}},
+		},
+	}}
+
+	broker := web.NewBroker()
+	srv := web.New(st, broker)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/xss2-incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// The raw <script>alert payload must not appear verbatim — templ escapes
+	// context values and bluemonday strips scripts from reasoning.
+	if strings.Contains(body, "<script>alert") {
+		t.Error("SEC-001: XSS payload found verbatim in rendered page")
+	}
 }
 
 // errStore is a fakeStore variant that injects errors for specific methods.
