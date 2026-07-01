@@ -8,6 +8,7 @@ type RCAResult struct {
 	ContributingFactors []string `json:"contributingFactors,omitempty"`
 	RemediationSteps    []string `json:"remediationSteps,omitempty"`
 	Confidence          float64  `json:"confidence"`
+	Reasoning           string   `json:"reasoning,omitempty"`
 }
 
 // Message is a single turn in an LLM conversation.

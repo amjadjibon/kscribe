@@ -128,6 +128,39 @@ func TestDiagnosisAgent_ProviderError(t *testing.T) {
 	}
 }
 
+func TestDiagnosisAgent_TraceAndContextJSON(t *testing.T) {
+	// One tool call, then RCA with reasoning — verifies Trace, Reasoning, ContextJSON.
+	const rcaWithReasoning = `{"summary":"pod OOMKilled","rootCause":"memory limit too low","confidence":0.9,"reasoning":"OOM events in logs confirm the root cause"}`
+	rcaResp := agent.Response{
+		Choices: []agent.Choice{{
+			Message:      agent.Message{Role: "assistant", Content: rcaWithReasoning},
+			FinishReason: "stop",
+		}},
+		Usage: agent.Usage{TotalTokens: 50},
+	}
+	prov := &fakeProvider{responses: []agent.Response{toolCallResp(30), rcaResp}}
+	ag := &agent.DiagnosisAgent{Provider: prov, MaxIter: 5}
+
+	input := []byte(`{"namespace":"default"}`)
+	out := ag.Run(context.Background(), input)
+
+	if out.Phase != kscribev1alpha1.DiagnosisPhaseDone {
+		t.Fatalf("want Done, got %s: %s", out.Phase, out.RawError)
+	}
+	if len(out.Trace) != 1 {
+		t.Fatalf("want 1 trace step, got %d", len(out.Trace))
+	}
+	if out.Trace[0].Tool != "get_pod_logs" {
+		t.Errorf("trace tool = %q, want get_pod_logs", out.Trace[0].Tool)
+	}
+	if out.Reasoning != "OOM events in logs confirm the root cause" {
+		t.Errorf("Reasoning = %q", out.Reasoning)
+	}
+	if string(out.ContextJSON) != string(input) {
+		t.Errorf("ContextJSON = %q, want %q", out.ContextJSON, input)
+	}
+}
+
 func TestDiagnosisAgent_ToolCallThenRCA(t *testing.T) {
 	// One tool call round, then a final RCA.
 	prov := &fakeProvider{responses: []agent.Response{
