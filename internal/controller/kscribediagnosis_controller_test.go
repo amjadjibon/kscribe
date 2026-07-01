@@ -3,11 +3,14 @@ package controller_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -280,6 +283,102 @@ func TestReconcile_PublishesOnSuccess(t *testing.T) {
 	}
 }
 
+// TestReconcile_ToolCallInvokedAndReachsDone proves that when the provider issues a tool call,
+// the executor is invoked and the final CR still reaches Done (executor is wired).
+func TestReconcile_ToolCallInvokedAndReachsDone(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-tool", "default")
+	fc := buildClient(scheme, kd).Build()
+
+	// spyExecutor records that Execute was called; always returns a safe string.
+	spy := &spyExecutor{result: "log output"}
+
+	// toolCallProvider: first call returns a tool-call message; second returns RCA.
+	tcProv := &toolCallProvider{
+		toolResp: agent.Response{
+			Choices: []agent.Choice{{
+				Message: agent.Message{
+					Role: "assistant",
+					ToolCalls: []agent.ToolCall{{
+						ID:   "tc-1",
+						Type: "function",
+						Function: agent.FunctionCall{
+							Name:      "get_pod_logs",
+							Arguments: `{"namespace":"default","pod":"pod-1"}`,
+						},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: agent.Usage{TotalTokens: 10},
+		},
+		rcaResp: agent.Response{
+			Choices: []agent.Choice{{
+				Message:      agent.Message{Role: "assistant", Content: goodRCA},
+				FinishReason: "stop",
+			}},
+			Usage: agent.Usage{TotalTokens: 20},
+		},
+	}
+
+	st := &fakeStore{}
+	r := &controller.KscribeDiagnosisReconciler{
+		Client:        fc,
+		Scheme:        scheme,
+		Store:         st,
+		AgentProvider: tcProv,
+		ToolExecutor:  spy,
+		Tools:         agent.KubeTools(),
+		MaxIter:       5,
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-tool", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+
+	if spy.calls == 0 {
+		t.Fatal("expected executor to be invoked for tool call; got 0 calls")
+	}
+
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-tool", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhaseDone {
+		t.Fatalf("want Done, got %s", got.Status.Phase)
+	}
+}
+
+// spyExecutor records Execute invocations and returns a fixed result.
+type spyExecutor struct {
+	calls  int
+	result string
+}
+
+func (s *spyExecutor) Execute(_ context.Context, _, _ string) (string, error) {
+	s.calls++
+	return s.result, nil
+}
+
+// toolCallProvider returns toolResp on first Complete, rcaResp on subsequent calls.
+type toolCallProvider struct {
+	toolResp agent.Response
+	rcaResp  agent.Response
+	called   int
+}
+
+func (p *toolCallProvider) Complete(_ context.Context, _ agent.Request) (agent.Response, error) {
+	p.called++
+	if p.called == 1 {
+		return p.toolResp, nil
+	}
+	return p.rcaResp, nil
+}
+
 // TestReconcile_IdempotentOnNonPending proves the reconciler skips CRs not in Pending/empty phase.
 func TestReconcile_IdempotentOnNonPending(t *testing.T) {
 	scheme := testScheme()
@@ -301,5 +400,97 @@ func TestReconcile_IdempotentOnNonPending(t *testing.T) {
 	if st.upsertCalled != 0 || st.insertCalled != 0 {
 		t.Fatalf("store must not be called for non-Pending CR; upsert=%d insert=%d",
 			st.upsertCalled, st.insertCalled)
+	}
+}
+
+// capturingProvider records every Request passed to Complete and returns a fixed response.
+type capturingProvider struct {
+	requests []agent.Request
+	resp     agent.Response
+}
+
+func (p *capturingProvider) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
+	p.requests = append(p.requests, req)
+	return p.resp, nil
+}
+
+// enrichedScheme returns a scheme with both client-go core types (corev1 etc.) and kscribe CRDs,
+// so the fake controller-runtime client can list Events and serve KD status sub-resources.
+func enrichedScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	sch := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(sch)    // corev1, appsv1, …
+	_ = kscribev1alpha1.AddToScheme(sch)   // KscribeDiagnosis
+	return sch
+}
+
+// TestReconcile_EnrichedSnapshotFeedsEvents proves the KubeClient != nil branch runs
+// BuildSnapshot, collects the seeded related Event, and its Reason appears in the prompt
+// sent to the provider — confirming the enriched path (not the fallback) executed.
+func TestReconcile_EnrichedSnapshotFeedsEvents(t *testing.T) {
+	sch := enrichedScheme(t)
+	kd := newKD("diag-enrich", "default")
+
+	seededEvent := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{Name: "ev-seeded", Namespace: "default"},
+		InvolvedObject: corev1.ObjectReference{
+			Name:      "pod-1", // matches kd.Spec.InvolvedObjectName
+			Namespace: "default",
+		},
+		Reason:  "SeededOOMReason",
+		Message: "seeded event detail",
+		Count:   1,
+	}
+
+	fc := buildClient(sch, kd).WithObjects(seededEvent).Build()
+
+	cap := &capturingProvider{resp: agent.Response{
+		Choices: []agent.Choice{{
+			Message:      agent.Message{Role: "assistant", Content: goodRCA},
+			FinishReason: "stop",
+		}},
+		Usage: agent.Usage{TotalTokens: 5},
+	}}
+
+	st := &fakeStore{}
+	r := &controller.KscribeDiagnosisReconciler{
+		Client:        fc,
+		Scheme:        sch,
+		Store:         st,
+		AgentProvider: cap,
+		MaxIter:       3,
+		KubeClient:    fakeLogServer(t, ""), // non-nil → triggers BuildSnapshot branch
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-enrich", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+
+	// CR must reach Done.
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-enrich", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhaseDone {
+		t.Fatalf("want Done, got %s", got.Status.Phase)
+	}
+	if !got.Status.Persisted {
+		t.Fatal("want Persisted=true")
+	}
+
+	// The seeded event Reason must appear in the captured prompt (enriched branch ran).
+	var prompt strings.Builder
+	for _, req := range cap.requests {
+		for _, msg := range req.Messages {
+			prompt.WriteString(msg.Content)
+		}
+	}
+	if !strings.Contains(prompt.String(), "SeededOOMReason") {
+		t.Errorf("SeededOOMReason not found in prompt — enriched snapshot branch did not run; prompt: %q",
+			prompt.String())
 	}
 }

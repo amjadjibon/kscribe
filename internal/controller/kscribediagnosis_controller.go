@@ -8,6 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -42,7 +43,8 @@ type KscribeDiagnosisReconciler struct {
 	MaxIter       int       // default max tool-call iterations; overridable via CR spec
 	Concurrency   int       // MaxConcurrentReconciles; 0 defaults to 1
 	Tools         []agent.ToolDefinition
-	ToolExecutor  agent.ToolExecutor // may be nil for MVP stub
+	ToolExecutor  agent.ToolExecutor  // nil falls back to stub error in agent loop
+	KubeClient    kubernetes.Interface // nil → falls back to minimal spec-only snapshot
 }
 
 // publish emits an SSE fragment if a Publisher is wired; no-op otherwise.
@@ -115,16 +117,33 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Build minimal snapshot from spec fields.
-	// ponytail: full BuildSnapshot (with live kube clients) is wired in main.go; here we
-	// use a lightweight stub so the reconciler compiles and tests pass without kube infra.
-	snap := &enricher.Snapshot{
-		EventUID:   kd.Spec.EventUID,
-		Reason:     kd.Spec.Reason,
-		Message:    kd.Spec.Message,
-		Namespace:  kd.Spec.InvolvedObjectNamespace,
-		ObjectKind: kd.Spec.InvolvedObjectKind,
-		ObjectName: kd.Spec.InvolvedObjectName,
+	// Build enriched snapshot; fall back to spec-only if KubeClient is absent or collection fails.
+	ref := enricher.ObjectRef{
+		Kind:      kd.Spec.InvolvedObjectKind,
+		Namespace: kd.Spec.InvolvedObjectNamespace,
+		Name:      kd.Spec.InvolvedObjectName,
+		EventUID:  kd.Spec.EventUID,
+		Reason:    kd.Spec.Reason,
+		Message:   kd.Spec.Message,
+	}
+	var snap *enricher.Snapshot
+	if r.KubeClient != nil {
+		var buildErr error
+		snap, buildErr = enricher.BuildSnapshot(ctx, r.Client, r.KubeClient, ref, 100)
+		if buildErr != nil {
+			logger.Info("BuildSnapshot failed, using minimal snapshot", "error", buildErr)
+			snap = nil
+		}
+	}
+	if snap == nil {
+		snap = &enricher.Snapshot{
+			EventUID:   kd.Spec.EventUID,
+			Reason:     kd.Spec.Reason,
+			Message:    kd.Spec.Message,
+			Namespace:  kd.Spec.InvolvedObjectNamespace,
+			ObjectKind: kd.Spec.InvolvedObjectKind,
+			ObjectName: kd.Spec.InvolvedObjectName,
+		}
 	}
 	snapshotJSON, encErr := enricher.EncodeSnapshot(snap)
 	if encErr != nil {
