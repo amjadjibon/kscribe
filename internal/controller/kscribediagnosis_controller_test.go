@@ -3,11 +3,14 @@ package controller_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -397,5 +400,97 @@ func TestReconcile_IdempotentOnNonPending(t *testing.T) {
 	if st.upsertCalled != 0 || st.insertCalled != 0 {
 		t.Fatalf("store must not be called for non-Pending CR; upsert=%d insert=%d",
 			st.upsertCalled, st.insertCalled)
+	}
+}
+
+// capturingProvider records every Request passed to Complete and returns a fixed response.
+type capturingProvider struct {
+	requests []agent.Request
+	resp     agent.Response
+}
+
+func (p *capturingProvider) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
+	p.requests = append(p.requests, req)
+	return p.resp, nil
+}
+
+// enrichedScheme returns a scheme with both client-go core types (corev1 etc.) and kscribe CRDs,
+// so the fake controller-runtime client can list Events and serve KD status sub-resources.
+func enrichedScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	sch := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(sch)    // corev1, appsv1, …
+	_ = kscribev1alpha1.AddToScheme(sch)   // KscribeDiagnosis
+	return sch
+}
+
+// TestReconcile_EnrichedSnapshotFeedsEvents proves the KubeClient != nil branch runs
+// BuildSnapshot, collects the seeded related Event, and its Reason appears in the prompt
+// sent to the provider — confirming the enriched path (not the fallback) executed.
+func TestReconcile_EnrichedSnapshotFeedsEvents(t *testing.T) {
+	sch := enrichedScheme(t)
+	kd := newKD("diag-enrich", "default")
+
+	seededEvent := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{Name: "ev-seeded", Namespace: "default"},
+		InvolvedObject: corev1.ObjectReference{
+			Name:      "pod-1", // matches kd.Spec.InvolvedObjectName
+			Namespace: "default",
+		},
+		Reason:  "SeededOOMReason",
+		Message: "seeded event detail",
+		Count:   1,
+	}
+
+	fc := buildClient(sch, kd).WithObjects(seededEvent).Build()
+
+	cap := &capturingProvider{resp: agent.Response{
+		Choices: []agent.Choice{{
+			Message:      agent.Message{Role: "assistant", Content: goodRCA},
+			FinishReason: "stop",
+		}},
+		Usage: agent.Usage{TotalTokens: 5},
+	}}
+
+	st := &fakeStore{}
+	r := &controller.KscribeDiagnosisReconciler{
+		Client:        fc,
+		Scheme:        sch,
+		Store:         st,
+		AgentProvider: cap,
+		MaxIter:       3,
+		KubeClient:    fakeLogServer(t, ""), // non-nil → triggers BuildSnapshot branch
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-enrich", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+
+	// CR must reach Done.
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-enrich", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhaseDone {
+		t.Fatalf("want Done, got %s", got.Status.Phase)
+	}
+	if !got.Status.Persisted {
+		t.Fatal("want Persisted=true")
+	}
+
+	// The seeded event Reason must appear in the captured prompt (enriched branch ran).
+	var prompt strings.Builder
+	for _, req := range cap.requests {
+		for _, msg := range req.Messages {
+			prompt.WriteString(msg.Content)
+		}
+	}
+	if !strings.Contains(prompt.String(), "SeededOOMReason") {
+		t.Errorf("SeededOOMReason not found in prompt — enriched snapshot branch did not run; prompt: %q",
+			prompt.String())
 	}
 }

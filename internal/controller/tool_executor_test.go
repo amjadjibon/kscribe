@@ -17,6 +17,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	runtimefake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/amjadjibon/kscribe/internal/controller"
 	"github.com/amjadjibon/kscribe/internal/enricher"
 )
@@ -160,5 +162,114 @@ func TestToolExecutor_UnknownTool(t *testing.T) {
 	_, err := exec.Execute(context.Background(), "do_something_weird", `{}`)
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
+	}
+}
+
+// TestToolExecutor_GetPodLogs_MalformedArgs asserts bad JSON args return an error.
+func TestToolExecutor_GetPodLogs_MalformedArgs(t *testing.T) {
+	exec := &controller.KubeToolExecutor{}
+	_, err := exec.Execute(context.Background(), "get_pod_logs", `{bad json`)
+	if err == nil {
+		t.Fatal("expected error for malformed args")
+	}
+}
+
+// streamErrorServer returns a kubernetes.Interface whose log endpoint always returns 500.
+func streamErrorServer(t *testing.T) kubernetes.Interface {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","message":"internal error","code":500}`)
+	}))
+	t.Cleanup(srv.Close)
+	kcs, err := kubernetes.NewForConfig(&rest.Config{Host: srv.URL})
+	if err != nil {
+		t.Fatalf("build error kube client: %v", err)
+	}
+	return kcs
+}
+
+// TestToolExecutor_GetPodLogs_StreamError asserts a stream failure returns an error (no panic).
+func TestToolExecutor_GetPodLogs_StreamError(t *testing.T) {
+	fc := runtimefake.NewClientBuilder().WithScheme(ctrlScheme(t)).Build()
+	exec := &controller.KubeToolExecutor{Client: fc, Kube: streamErrorServer(t)}
+	_, err := exec.Execute(context.Background(), "get_pod_logs",
+		`{"namespace":"default","pod":"crash-pod"}`)
+	if err == nil {
+		t.Fatal("expected error when log stream fails")
+	}
+}
+
+// TestToolExecutor_GetEvents_NoFilterAndCap seeds 35 events, calls get_events with no
+// object_name filter, asserts output is capped at 30 lines and a secret is redacted.
+func TestToolExecutor_GetEvents_NoFilterAndCap(t *testing.T) {
+	sch := ctrlScheme(t)
+	objs := make([]client.Object, 35)
+	for i := range objs {
+		msg := fmt.Sprintf("normal event %d", i)
+		if i == 0 {
+			msg = "token=supersecretvalue999" // secret in first event
+		}
+		objs[i] = &corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("ev-%d", i),
+				Namespace: "default",
+			},
+			InvolvedObject: corev1.ObjectReference{
+				Name:      fmt.Sprintf("obj-%d", i%5), // mix of object names
+				Namespace: "default",
+			},
+			Reason:  "SomeReason",
+			Message: msg,
+			Count:   1,
+		}
+	}
+	fc := runtimefake.NewClientBuilder().WithScheme(sch).WithObjects(objs...).Build()
+	exec := &controller.KubeToolExecutor{Client: fc, Kube: fakeLogServer(t, "")}
+
+	result, err := exec.Execute(context.Background(), "get_events", `{"namespace":"default"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	lines := strings.Count(result, "\n")
+	if lines > 30 {
+		t.Errorf("expected <=30 event lines, got %d", lines)
+	}
+	if strings.Contains(result, "supersecretvalue999") {
+		t.Errorf("secret still present in events output: %q", result)
+	}
+	// Multiple object names should appear (no object_name filter applied).
+	hasMultiple := strings.Contains(result, "obj-0") && strings.Contains(result, "obj-1")
+	if !hasMultiple {
+		t.Errorf("expected events from multiple objects; got: %q", result)
+	}
+}
+
+// TestToolExecutor_GetEvents_MalformedArgs asserts bad JSON returns an error.
+func TestToolExecutor_GetEvents_MalformedArgs(t *testing.T) {
+	exec := &controller.KubeToolExecutor{}
+	_, err := exec.Execute(context.Background(), "get_events", `{bad json`)
+	if err == nil {
+		t.Fatal("expected error for malformed args")
+	}
+}
+
+// TestToolExecutor_GetNode_NotFound asserts an error when the node is absent.
+func TestToolExecutor_GetNode_NotFound(t *testing.T) {
+	fc := runtimefake.NewClientBuilder().WithScheme(ctrlScheme(t)).Build()
+	exec := &controller.KubeToolExecutor{Client: fc, Kube: fakeLogServer(t, "")}
+	_, err := exec.Execute(context.Background(), "get_node", `{"node_name":"missing-node"}`)
+	if err == nil {
+		t.Fatal("expected error for missing node")
+	}
+}
+
+// TestToolExecutor_GetNode_MalformedArgs asserts bad JSON returns an error.
+func TestToolExecutor_GetNode_MalformedArgs(t *testing.T) {
+	exec := &controller.KubeToolExecutor{}
+	_, err := exec.Execute(context.Background(), "get_node", `{bad json`)
+	if err == nil {
+		t.Fatal("expected error for malformed args")
 	}
 }
