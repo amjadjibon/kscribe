@@ -46,6 +46,9 @@ type Diagnosis struct {
 	Remediation string
 	Confidence  float64
 	CreatedAt   time.Time
+	ContextJSON []byte // redacted snapshot sent to the LLM — decode with sonic
+	Reasoning   string // narrative explanation of how the conclusion was reached
+	TraceJSON   []byte // tool-call trace — decode with sonic
 }
 
 // IncidentFilter holds optional filter criteria for incident list queries. SEC-002: all
@@ -181,13 +184,22 @@ func (s *Store) InsertDiagnosis(ctx context.Context, d Diagnosis, rcaPayload any
 	if err != nil {
 		return fmt.Errorf("marshal rca payload: %w", err)
 	}
+	ctxJSON := d.ContextJSON
+	if len(ctxJSON) == 0 {
+		ctxJSON = []byte("{}")
+	}
+	traceJSON := d.TraceJSON
+	if len(traceJSON) == 0 {
+		traceJSON = []byte("[]")
+	}
 	const q = `
-INSERT INTO diagnoses (namespace, name, event_uid, rca_json, summary, root_cause, remediation, confidence, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+INSERT INTO diagnoses (namespace, name, event_uid, rca_json, summary, root_cause, remediation, confidence, created_at, context_json, reasoning, trace_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = s.db.ExecContext(ctx, q,
 		d.Namespace, d.Name, d.EventUID,
 		string(rcaJSON), d.Summary, d.RootCause, d.Remediation, d.Confidence,
 		time.Now().UTC().Format(time.RFC3339Nano),
+		string(ctxJSON), d.Reasoning, string(traceJSON),
 	)
 	return err
 }
@@ -276,7 +288,7 @@ FROM incidents WHERE namespace = ? AND name = ?`
 	}
 
 	const dq = `
-SELECT id, namespace, name, event_uid, rca_json, summary, root_cause, remediation, confidence, created_at
+SELECT id, namespace, name, event_uid, rca_json, summary, root_cause, remediation, confidence, created_at, context_json, reasoning, trace_json
 FROM diagnoses WHERE namespace = ? AND name = ?
 ORDER BY created_at ASC`
 
@@ -293,7 +305,7 @@ ORDER BY created_at ASC`
 		if err := rows.Scan(
 			&d.ID, &d.Namespace, &d.Name, &d.EventUID,
 			&d.RCAJson, &d.Summary, &d.RootCause, &d.Remediation, &d.Confidence,
-			&createdAt,
+			&createdAt, &d.ContextJSON, &d.Reasoning, &d.TraceJSON,
 		); err != nil {
 			return nil, err
 		}

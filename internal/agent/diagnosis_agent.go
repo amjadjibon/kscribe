@@ -9,12 +9,22 @@ import (
 	kscribev1alpha1 "github.com/amjadjibon/kscribe/api/v1alpha1"
 )
 
+// TraceStep records one tool invocation during the diagnosis loop.
+type TraceStep struct {
+	Tool   string `json:"tool"`
+	Args   string `json:"args"`
+	Result string `json:"result"` // truncated to ~200 chars
+}
+
 // Outcome is the result of a single diagnosis run.
 type Outcome struct {
-	Phase      kscribev1alpha1.DiagnosisPhase
-	RCA        *RCAResult // non-nil when Phase is Done
-	TokensUsed int64
-	RawError   string // human-readable reason for Partial or Failed
+	Phase       kscribev1alpha1.DiagnosisPhase
+	RCA         *RCAResult // non-nil when Phase is Done
+	TokensUsed  int64
+	RawError    string // human-readable reason for Partial or Failed
+	Reasoning   string
+	Trace       []TraceStep
+	ContextJSON []byte
 }
 
 // DiagnosisAgent orchestrates an LLM tool-call loop to produce a root-cause analysis.
@@ -27,7 +37,7 @@ type DiagnosisAgent struct {
 }
 
 const systemPrompt = `You are a Kubernetes SRE expert. Analyse the provided cluster context and produce a root-cause analysis (RCA). Use the available tools if you need more information. When you have sufficient information, respond ONLY with a JSON object matching this exact schema (no prose, no markdown fences):
-{"summary":"...","rootCause":"...","contributingFactors":["..."],"remediationSteps":["..."],"confidence":0.9}`
+{"summary":"...","rootCause":"...","contributingFactors":["..."],"remediationSteps":["..."],"confidence":0.9,"reasoning":"concise explanation of how the conclusion was reached"}`
 
 // Run executes the diagnosis loop and returns an Outcome.
 // Done  = valid RCA parsed (first try or after one JSON-repair retry).
@@ -45,23 +55,28 @@ func (a *DiagnosisAgent) Run(ctx context.Context, snapshotJSON []byte) Outcome {
 	}
 
 	var totalTokens int64
+	trace := make([]TraceStep, 0) // non-nil so sonic.Marshal produces "[]" not "null"
 
 	for i := 0; i < maxIter; i++ {
 		resp, err := a.Provider.Complete(ctx, Request{Messages: messages, Tools: a.Tools})
 		if err != nil {
 			return Outcome{
-				Phase:      kscribev1alpha1.DiagnosisPhaseFailed,
-				TokensUsed: totalTokens,
-				RawError:   err.Error(),
+				Phase:       kscribev1alpha1.DiagnosisPhaseFailed,
+				TokensUsed:  totalTokens,
+				RawError:    err.Error(),
+				Trace:       trace,
+				ContextJSON: snapshotJSON,
 			}
 		}
 		totalTokens += int64(resp.Usage.TotalTokens)
 
 		if len(resp.Choices) == 0 {
 			return Outcome{
-				Phase:      kscribev1alpha1.DiagnosisPhaseFailed,
-				TokensUsed: totalTokens,
-				RawError:   "provider returned empty choices",
+				Phase:       kscribev1alpha1.DiagnosisPhaseFailed,
+				TokensUsed:  totalTokens,
+				RawError:    "provider returned empty choices",
+				Trace:       trace,
+				ContextJSON: snapshotJSON,
 			}
 		}
 
@@ -73,30 +88,47 @@ func (a *DiagnosisAgent) Run(ctx context.Context, snapshotJSON []byte) Outcome {
 			rca, err := parseRCA(msg.Content)
 			if err == nil {
 				return Outcome{
-					Phase:      kscribev1alpha1.DiagnosisPhaseDone,
-					RCA:        rca,
-					TokensUsed: totalTokens,
+					Phase:       kscribev1alpha1.DiagnosisPhaseDone,
+					RCA:         rca,
+					TokensUsed:  totalTokens,
+					Reasoning:   rca.Reasoning,
+					Trace:       trace,
+					ContextJSON: snapshotJSON,
 				}
 			}
 			// Single JSON-repair retry (per spec).
 			rca, repairErr := a.repairRCA(ctx, messages, &totalTokens)
 			if repairErr == nil {
 				return Outcome{
-					Phase:      kscribev1alpha1.DiagnosisPhaseDone,
-					RCA:        rca,
-					TokensUsed: totalTokens,
+					Phase:       kscribev1alpha1.DiagnosisPhaseDone,
+					RCA:         rca,
+					TokensUsed:  totalTokens,
+					Reasoning:   rca.Reasoning,
+					Trace:       trace,
+					ContextJSON: snapshotJSON,
 				}
 			}
 			return Outcome{
-				Phase:      kscribev1alpha1.DiagnosisPhasePartial,
-				TokensUsed: totalTokens,
-				RawError:   fmt.Sprintf("rca parse: %v; repair: %v", err, repairErr),
+				Phase:       kscribev1alpha1.DiagnosisPhasePartial,
+				TokensUsed:  totalTokens,
+				RawError:    fmt.Sprintf("rca parse: %v; repair: %v", err, repairErr),
+				Trace:       trace,
+				ContextJSON: snapshotJSON,
 			}
 		}
 
-		// Execute tool calls and append results.
+		// Execute tool calls, record trace, and append results.
 		for _, tc := range msg.ToolCalls {
 			result := a.callTool(ctx, tc)
+			truncated := result
+			if len(truncated) > 200 {
+				truncated = truncated[:200]
+			}
+			trace = append(trace, TraceStep{
+				Tool:   tc.Function.Name,
+				Args:   tc.Function.Arguments,
+				Result: truncated,
+			})
 			messages = append(messages, Message{
 				Role:       "tool",
 				ToolCallID: tc.ID,
@@ -107,9 +139,11 @@ func (a *DiagnosisAgent) Run(ctx context.Context, snapshotJSON []byte) Outcome {
 	}
 
 	return Outcome{
-		Phase:      kscribev1alpha1.DiagnosisPhasePartial,
-		TokensUsed: totalTokens,
-		RawError:   "max iterations reached without final RCA",
+		Phase:       kscribev1alpha1.DiagnosisPhasePartial,
+		TokensUsed:  totalTokens,
+		RawError:    "max iterations reached without final RCA",
+		Trace:       trace,
+		ContextJSON: snapshotJSON,
 	}
 }
 

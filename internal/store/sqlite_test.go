@@ -450,6 +450,76 @@ func TestInjectionLiteral(t *testing.T) {
 	}
 }
 
+// TestMigration0002Columns verifies that the 0002 migration applied and the new columns exist.
+func TestMigration0002Columns(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Verify version 2 is recorded.
+	var version int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT version FROM schema_migrations WHERE version = 2",
+	).Scan(&version); err != nil {
+		t.Fatalf("migration version 2 not recorded: %v", err)
+	}
+
+	// Verify the three new columns exist by querying them directly.
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT context_json, reasoning, trace_json FROM diagnoses LIMIT 0",
+	).Err(); err != nil {
+		t.Fatalf("new columns missing from diagnoses: %v", err)
+	}
+}
+
+// TestInsertDiagnosis_ContextReasoningTrace verifies that the three new fields
+// round-trip through InsertDiagnosis → GetIncident correctly.
+func TestInsertDiagnosis_ContextReasoningTrace(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	if err := s.UpsertIncident(ctx, Incident{
+		Namespace: "ns", Name: "crt-diag", Phase: "Done",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	d := Diagnosis{
+		Namespace:   "ns",
+		Name:        "crt-diag",
+		EventUID:    "uid-crt",
+		Summary:     "OOM",
+		RootCause:   "memory leak",
+		Remediation: "increase limit",
+		Confidence:  0.85,
+		ContextJSON: []byte(`{"reason":"OOMKilled"}`),
+		Reasoning:   "high confidence based on OOM events in logs",
+		TraceJSON:   []byte(`[{"tool":"get_pod_logs","args":"{}","result":"OOM"}]`),
+	}
+	type dummy struct{ X int }
+	if err := s.InsertDiagnosis(ctx, d, dummy{X: 1}); err != nil {
+		t.Fatalf("InsertDiagnosis: %v", err)
+	}
+
+	detail, err := s.GetIncident(ctx, "ns", "crt-diag")
+	if err != nil {
+		t.Fatalf("GetIncident: %v", err)
+	}
+	if len(detail.Diagnoses) != 1 {
+		t.Fatalf("want 1 diagnosis, got %d", len(detail.Diagnoses))
+	}
+	got := detail.Diagnoses[0]
+
+	if string(got.ContextJSON) != `{"reason":"OOMKilled"}` {
+		t.Errorf("ContextJSON = %q, want {\"reason\":\"OOMKilled\"}", got.ContextJSON)
+	}
+	if got.Reasoning != "high confidence based on OOM events in logs" {
+		t.Errorf("Reasoning = %q", got.Reasoning)
+	}
+	if string(got.TraceJSON) != `[{"tool":"get_pod_logs","args":"{}","result":"OOM"}]` {
+		t.Errorf("TraceJSON = %q", got.TraceJSON)
+	}
+}
+
 // TestCountIncidentsByPhase verifies phase aggregation.
 func TestCountIncidentsByPhase(t *testing.T) {
 	s := openTestStore(t)

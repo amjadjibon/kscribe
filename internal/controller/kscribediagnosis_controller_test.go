@@ -403,6 +403,49 @@ func TestReconcile_IdempotentOnNonPending(t *testing.T) {
 	}
 }
 
+// TestReconcile_PersistsContextReasoningTrace asserts that the three new fields
+// (ContextJSON, Reasoning, TraceJSON) are populated on the Diagnosis passed to InsertDiagnosis.
+func TestReconcile_PersistsContextReasoningTrace(t *testing.T) {
+	const rcaWithReasoning = `{"summary":"test summary","rootCause":"test cause","confidence":0.9,"reasoning":"based on repeated OOM events"}`
+	scheme := testScheme()
+	kd := newKD("diag-crt", "default")
+	fc := buildClient(scheme, kd).Build()
+
+	prov := &fixedProvider{resp: agent.Response{
+		Choices: []agent.Choice{{
+			Message:      agent.Message{Role: "assistant", Content: rcaWithReasoning},
+			FinishReason: "stop",
+		}},
+		Usage: agent.Usage{TotalTokens: 10},
+	}}
+
+	st := &fakeStore{}
+	r := reconcilerFor(st, prov)
+	r.Client = fc
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-crt", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+	if st.insertCalled != 1 {
+		t.Fatalf("want insertCalled=1, got %d", st.insertCalled)
+	}
+
+	d := st.diagnoses[0]
+	if len(d.ContextJSON) == 0 {
+		t.Error("ContextJSON must be non-empty")
+	}
+	if d.Reasoning != "based on repeated OOM events" {
+		t.Errorf("Reasoning = %q, want 'based on repeated OOM events'", d.Reasoning)
+	}
+	// No tool calls → TraceJSON must be the marshalled empty slice "[]".
+	if string(d.TraceJSON) != "[]" {
+		t.Errorf("TraceJSON = %q, want []", d.TraceJSON)
+	}
+}
+
 // capturingProvider records every Request passed to Complete and returns a fixed response.
 type capturingProvider struct {
 	requests []agent.Request
