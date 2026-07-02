@@ -109,7 +109,7 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = templates.Layout("kscribe — "+name, templates.IncidentDetail(detail)).Render(r.Context(), w)
+	_ = templates.Layout("kscribe — "+name, templates.IncidentDetail(templates.BuildDetailView(detail))).Render(r.Context(), w)
 }
 
 // stream handles SSE for a single incident. It streams Event.HTML fragments to

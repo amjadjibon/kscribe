@@ -102,7 +102,7 @@ templ IncidentList(incidents []store.Incident, totals map[string]int, page, last
 
 // IncidentDetail renders the full incident detail page with tabbed layout.
 // CON-005: tabs use Alpine x-show (not x-if) so the SSE block stays in the DOM.
-templ IncidentDetail(d *store.IncidentDetail) {
+templ IncidentDetail(d *IncidentDetailView) {
 	<div x-data="{ tab: 'overview' }">
 		<div class="detail-header">
 			<h2>
@@ -123,6 +123,18 @@ templ IncidentDetail(d *store.IncidentDetail) {
 				@click="tab='rca'"
 				role="tab"
 			>RCA</button>
+			<button
+				class="tab-button"
+				:class="{ 'tab-button-active': tab === 'context' }"
+				@click="tab='context'"
+				role="tab"
+			>Context</button>
+			<button
+				class="tab-button"
+				:class="{ 'tab-button-active': tab === 'reasoning' }"
+				@click="tab='reasoning'"
+				role="tab"
+			>Reasoning</button>
 			<button
 				class="tab-button"
 				:class="{ 'tab-button-active': tab === 'raw' }"
@@ -167,16 +179,40 @@ templ IncidentDetail(d *store.IncidentDetail) {
 		<!-- RCA tab: diagnosis cards with sanitized Markdown.
 		     x-show keeps elements in DOM — Alpine toggles display only. -->
 		<div x-show="tab === 'rca'">
-			if len(d.Diagnoses) > 0 {
+			if len(d.DiagnosisViews) > 0 {
 				<section>
 					<h3>RCA / Remediation</h3>
-					for _, diag := range d.Diagnoses {
-						@DiagnosisBlock(diag)
+					for _, dv := range d.DiagnosisViews {
+						@DiagnosisBlock(dv.Diagnosis)
 					}
 				</section>
 			} else {
 				<div class="empty-state">
 					<p>No diagnosis available yet.</p>
+				</div>
+			}
+		</div>
+		<!-- Context tab: snapshot decoded from context_json — pod logs, events, node conditions. -->
+		<div x-show="tab === 'context'">
+			if len(d.DiagnosisViews) > 0 {
+				for _, dv := range d.DiagnosisViews {
+					@DiagnosisContextBlock(dv)
+				}
+			} else {
+				<div class="empty-state">
+					<p>No context captured.</p>
+				</div>
+			}
+		</div>
+		<!-- Reasoning tab: LLM reasoning (sanitized Markdown) + tool-call trace. -->
+		<div x-show="tab === 'reasoning'">
+			if len(d.DiagnosisViews) > 0 {
+				for _, dv := range d.DiagnosisViews {
+					@DiagnosisReasoningBlock(dv)
+				}
+			} else {
+				<div class="empty-state">
+					<p>No reasoning captured.</p>
 				</div>
 			}
 		</div>
@@ -206,6 +242,132 @@ templ IncidentDetail(d *store.IncidentDetail) {
 			</section>
 		</div>
 	</div>
+}
+
+// DiagnosisContextBlock renders the decoded snapshot for one diagnosis.
+// SEC-001: all values are templ text nodes — HTML-escaped automatically.
+templ DiagnosisContextBlock(dv DiagnosisView) {
+	<article class="context-block">
+		<header>
+			<strong>Diagnosis #{ fmt.Sprintf("%d", dv.ID) } — Context</strong>
+		</header>
+		if dv.Snapshot == nil {
+			<div class="empty-state"><p>No context captured.</p></div>
+		} else {
+			if len(dv.Snapshot.PodContexts) > 0 {
+				<section>
+					<h4>Pod Logs</h4>
+					for _, pod := range dv.Snapshot.PodContexts {
+						<div class="context-section">
+							<strong>{ pod.PodName }</strong>
+							<small> ({ pod.Phase } on { pod.NodeName })</small>
+							for _, log := range pod.Logs {
+								<div class="log-label">{ log.ContainerName }</div>
+								<pre class="log-block">{ log.Lines }</pre>
+							}
+						</div>
+					}
+				</section>
+			}
+			if len(dv.Snapshot.RelatedEvents) > 0 {
+				<section>
+					<h4>Related Events</h4>
+					<table>
+						<thead>
+							<tr><th>Name</th><th>Reason</th><th>Message</th><th>Count</th></tr>
+						</thead>
+						<tbody>
+							for _, ev := range dv.Snapshot.RelatedEvents {
+								<tr>
+									<td>{ ev.Name }</td>
+									<td>{ ev.Reason }</td>
+									<td>{ ev.Message }</td>
+									<td>{ fmt.Sprintf("%d", ev.Count) }</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</section>
+			}
+			if len(dv.Snapshot.NodeConditions) > 0 {
+				<section>
+					<h4>Node Conditions</h4>
+					<dl>
+						for _, nc := range dv.Snapshot.NodeConditions {
+							<dt>{ nc.NodeName } / { nc.Type }</dt>
+							<dd>{ nc.Status } — { nc.Message }</dd>
+						}
+					</dl>
+				</section>
+			}
+			if dv.Snapshot.DeploymentStatus != nil {
+				<section>
+					<h4>Deployment: { dv.Snapshot.DeploymentStatus.Name }</h4>
+					<dl>
+						<dt>Replicas</dt><dd>{ fmt.Sprintf("%d ready / %d available / %d total", dv.Snapshot.DeploymentStatus.ReadyReplicas, dv.Snapshot.DeploymentStatus.AvailableReplicas, dv.Snapshot.DeploymentStatus.Replicas) }</dd>
+						for _, c := range dv.Snapshot.DeploymentStatus.Conditions {
+							<dt>Condition</dt><dd>{ c }</dd>
+						}
+					</dl>
+				</section>
+			}
+			if dv.Snapshot.ReplicaSetStatus != nil {
+				<section>
+					<h4>ReplicaSet: { dv.Snapshot.ReplicaSetStatus.Name }</h4>
+					<dl>
+						<dt>Replicas</dt><dd>{ fmt.Sprintf("%d ready / %d total", dv.Snapshot.ReplicaSetStatus.ReadyReplicas, dv.Snapshot.ReplicaSetStatus.Replicas) }</dd>
+						for _, c := range dv.Snapshot.ReplicaSetStatus.Conditions {
+							<dt>Condition</dt><dd>{ c }</dd>
+						}
+					</dl>
+				</section>
+			}
+			if len(dv.Snapshot.Partial) > 0 {
+				<section>
+					<h4>Collection Warnings</h4>
+					<ul>
+						for _, p := range dv.Snapshot.Partial {
+							<li>{ p }</li>
+						}
+					</ul>
+				</section>
+			}
+		}
+	</article>
+}
+
+// DiagnosisReasoningBlock renders the LLM reasoning (sanitized Markdown) and tool-call trace.
+// SEC-001: reasoning passes through RenderMarkdown (goldmark + bluemonday); trace values are templ text nodes.
+templ DiagnosisReasoningBlock(dv DiagnosisView) {
+	<article class="context-block">
+		<header>
+			<strong>Diagnosis #{ fmt.Sprintf("%d", dv.ID) } — Reasoning</strong>
+		</header>
+		if dv.Reasoning == "" && len(dv.TraceSteps) == 0 {
+			<div class="empty-state"><p>No reasoning captured.</p></div>
+		} else {
+			if dv.Reasoning != "" {
+				<section>
+					<h4>Analysis</h4>
+					<div class="markdown">@RenderMarkdown(dv.Reasoning)</div>
+				</section>
+			}
+			if len(dv.TraceSteps) > 0 {
+				<section>
+					<h4>Tool Trace</h4>
+					<ol class="trace-list">
+						for _, step := range dv.TraceSteps {
+							<li class="trace-step">
+								<span class="trace-tool">{ step.Tool }</span>
+								<div class="trace-args"><span class="trace-label">args: </span><code>{ marshalJSON(step.Args) }</code></div>
+								<div class="trace-result"><span class="trace-label">result: </span><code>{ marshalJSON(step.Result) }</code></div>
+							</li>
+						}
+					</ol>
+				</section>
+			}
+		}
+	</article>
 }
 
 // DiagnosisBlock renders a single diagnosis record with sanitized Markdown for LLM fields.

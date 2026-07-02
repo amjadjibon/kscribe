@@ -544,6 +544,91 @@ a.stat-card {
 a.stat-card:hover { box-shadow: var(--shadow-md); text-decoration: none; }
 .stat-card-active { box-shadow: var(--shadow-md); border-color: var(--c-link) !important; }
 
+/* ── Context / Reasoning blocks (TASK-009) ───────────────────────────── */
+.context-block {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.context-block header {
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.context-section { margin-bottom: var(--sp-4); }
+
+.log-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--c-text-muted);
+  margin: var(--sp-2) 0 var(--sp-1);
+}
+
+.log-block {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  background: var(--c-code-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 20rem;
+  overflow-y: auto;
+  margin: 0 0 var(--sp-2);
+}
+
+/* Trace list */
+.trace-list {
+  list-style: decimal;
+  padding-left: var(--sp-5);
+  margin: 0;
+}
+
+.trace-step {
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-3);
+  background: var(--c-surface-alt);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  list-style-position: outside;
+}
+
+.trace-tool {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--c-link);
+}
+
+.trace-args,
+.trace-result {
+  margin-top: var(--sp-1);
+  font-size: var(--text-sm);
+}
+
+.trace-label {
+  font-size: var(--text-xs);
+  color: var(--c-text-muted);
+  font-weight: 500;
+}
+
+.trace-args code,
+.trace-result code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  background: var(--c-code-bg);
+  padding: .1em .3em;
+  border-radius: var(--r-sm);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
 /* ── Confidence badge ────────────────────────────────────────────────── */
 .confidence-badge {
   display: inline-flex;
