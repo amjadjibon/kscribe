@@ -17,7 +17,7 @@ last_review_base: '6fcb2af'
 
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
-| 1    | pending | —    | —    | —   | —   | sequential | implemented |
+| 1    | Approve | 0 | 0 | 0 | 4 | sequential | Clean Exit (4 Low/2 Info non-blocking) |
 
 ## Stacked PRs
 
@@ -39,5 +39,5 @@ last_review_base: '6fcb2af'
 ### Iteration 1
 - [x] implement-plan (sequential, 5 phases)
 - [x] qa (coverage up, CompleteStream malformed-chunk bug fixed)
-- [ ] code-review
-- [ ] decide
+- [x] code-review (Approve: 0C/0H/0M/4L/2I)
+- [x] decide -> Clean Exit; 4 Low + 2 Info non-blocking (see REVIEW.md)
