@@ -7,7 +7,7 @@ max_iterations: 3
 max_phases: 6
 max_agents: 3
 current_iteration: 1
-status: running
+status: complete
 last_review_base: '6fcb2af'
 ---
 
@@ -40,4 +40,4 @@ last_review_base: '6fcb2af'
 - [x] implement-plan (sequential, 5 phases)
 - [x] qa (coverage up, CompleteStream malformed-chunk bug fixed)
 - [x] code-review (Approve: 0C/0H/0M/4L/2I)
-- [x] decide -> Clean Exit; 4 Low + 2 Info non-blocking (see REVIEW.md)
+- [x] decide -> fixed 4 Low @684e353; Clean Exit (2 Info non-blocking)
