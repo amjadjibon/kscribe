@@ -17,17 +17,17 @@ last_review_base: ''
 
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
-| 1    | —       | —    | —    | —   | —   | —    | —      |
+| 1    | pending | —    | —    | —   | —   | sequential | implemented |
 
 ## Stacked PRs
 
 | Phase   | Branch                  | PR URL | Base                    | Status  |
 |---------|-------------------------|--------|-------------------------|---------|
-| phase-1 | incident-insights-phase-1 | —    | main                    | pending |
-| phase-2 | incident-insights-phase-2 | —    | incident-insights-phase-1 | pending |
-| phase-3 | incident-insights-phase-3 | —    | incident-insights-phase-2 | pending |
-| phase-4 | incident-insights-phase-4 | —    | incident-insights-phase-3 | pending |
-| phase-5 | incident-insights-phase-5 | —    | incident-insights-phase-4 | pending |
+| phase-1 | incident-insights-phase-1 | 47322a3    | main                    | implemented |
+| phase-2 | incident-insights-phase-2 | 885a93f    | incident-insights-phase-1 | implemented |
+| phase-3 | incident-insights-phase-3 | e53851a    | incident-insights-phase-2 | implemented |
+| phase-4 | incident-insights-phase-4 | 5e3241e    | incident-insights-phase-3 | implemented |
+| phase-5 | incident-insights-phase-5 | d6d4645    | incident-insights-phase-4 | implemented |
 
 ## Active Worktrees
 
@@ -37,7 +37,7 @@ last_review_base: ''
 ## Log
 
 ### Iteration 1
-- [ ] implement-plan
+- [x] implement-plan (sequential, 5 phases)
 - [ ] qa
 - [ ] code-review
 - [ ] decide
