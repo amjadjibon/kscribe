@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
 
@@ -1413,6 +1414,194 @@ func TestRunChat_HistoryBudget(t *testing.T) {
 	// req.Messages[0] = system; rest = bounded history (max 10 items).
 	if len(req.Messages) > 11 { // 1 system + 10 history
 		t.Errorf("history budget not enforced: got %d messages in request (want ≤11)", len(req.Messages))
+	}
+}
+
+// TestRunChat_UTF8ContextTruncation asserts LOW-1: when ContextJSON contains
+// multi-byte runes and is truncated at the byte budget, the system message is
+// still valid UTF-8 and within the budget + prefix overhead. LOW-1.
+func TestRunChat_UTF8ContextTruncation(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "utf8-trunc"
+
+	// Build a context blob filled with 3-byte UTF-8 runes ('あ') so that a
+	// naive byte-slice at chatContextBudget (4096) splits a rune: 4096 % 3 == 1.
+	const budget = 4096
+	rune3 := []byte("あ") // 3 bytes: E3 81 82
+	ctxBytes := make([]byte, 0, budget+10)
+	for len(ctxBytes) < budget+6 {
+		ctxBytes = append(ctxBytes, rune3...)
+	}
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+			Diagnoses: []store.Diagnosis{{
+				Summary:     "s",
+				RootCause:   "r",
+				ContextJSON: ctxBytes,
+			}},
+		},
+	}}
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "q"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	req := prov.lastReq
+	if len(req.Messages) == 0 || req.Messages[0].Role != "system" {
+		t.Fatal("expected system message")
+	}
+	sys := req.Messages[0].Content
+	if !strings.Contains(sys, "Context:") {
+		t.Fatal("system message missing Context: section")
+	}
+	// Extract just the context portion to validate UTF-8 without worrying about prefix.
+	ctxPart := sys[strings.Index(sys, "Context:"):]
+	if !utf8.ValidString(ctxPart) {
+		t.Error("LOW-1: context portion of system message is not valid UTF-8")
+	}
+	// The full system message must also be valid UTF-8.
+	if !utf8.ValidString(sys) {
+		t.Error("LOW-1: system message is not valid UTF-8")
+	}
+}
+
+// TestChatPost_EmptyMessage asserts LOW-2: empty and whitespace-only messages
+// return HTTP 400 without invoking the provider.
+func TestChatPost_EmptyMessage(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/empty-msg": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "empty-msg", Phase: "Done",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		},
+	}}
+	prov := &capturingProvider{delta: "should not be called"}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	cases := []struct {
+		name string
+		body string
+		ct   string
+	}{
+		{"empty_form", "message=", "application/x-www-form-urlencoded"},
+		{"whitespace_form", "message=   ", "application/x-www-form-urlencoded"},
+		{"empty_body", "", "text/plain"},
+		{"whitespace_body", "   \t\n", "text/plain"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Post(ts.URL+"/incidents/default/empty-msg/chat",
+				tc.ct, strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("LOW-2: want 400 for empty/whitespace message, got %d", resp.StatusCode)
+			}
+		})
+	}
+	// Provider must not have been invoked for any of the above.
+	if prov.lastReq.Messages != nil {
+		t.Error("LOW-2: provider was invoked despite empty/whitespace message")
+	}
+}
+
+// emptyStreamProvider is a non-streaming Provider that returns no content (no choices),
+// so StreamOrComplete never calls onDelta and accumulated stays empty. LOW-3.
+type emptyStreamProvider struct{}
+
+func (e *emptyStreamProvider) Complete(_ context.Context, _ agent.Request) (agent.Response, error) {
+	return agent.Response{}, nil // no Choices → onDelta never called
+}
+
+// TestRunChat_EmptyStreamFallback asserts LOW-3: when the provider returns no
+// content, an assistant message is persisted with the fallback text (not empty).
+func TestRunChat_EmptyStreamFallback(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "empty-stream"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, &emptyStreamProvider{}, broker, ns, name, "q"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	msgs, _ := st.ListChatMessages(ctx, ns, name)
+	if len(msgs) != 2 {
+		t.Fatalf("LOW-3: want 2 messages, got %d", len(msgs))
+	}
+	asst := msgs[1]
+	if asst.Role != "assistant" {
+		t.Fatalf("LOW-3: want assistant message, got role=%q", asst.Role)
+	}
+	if strings.TrimSpace(asst.Content) == "" {
+		t.Error("LOW-3: assistant message is empty — fallback not applied")
+	}
+	if asst.Content == "" || asst.Content == " " {
+		t.Error("LOW-3: assistant message is blank")
+	}
+	// Verify it's the expected fallback text.
+	if asst.Content != "(no response from model)" {
+		t.Errorf("LOW-3: want fallback text, got %q", asst.Content)
+	}
+}
+
+// TestRunChat_HistoryByteBudget asserts LOW-4: when history messages' total
+// content bytes exceed chatHistoryByteBudget (8192), oldest messages are dropped
+// so the request stays within the byte cap.
+func TestRunChat_HistoryByteBudget(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "byte-budget"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+
+	// Seed 8 messages each with 1500-byte content → total 12000 bytes, well over 8192.
+	// Also within the 10-message count cap, so only the byte cap triggers.
+	bigContent := strings.Repeat("x", 1500)
+	for i := 0; i < 8; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		_ = st.AppendChatMessage(ctx, ns, name, role, bigContent)
+	}
+
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "new question"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	req := prov.lastReq
+	// Count total history content bytes (exclude system message at index 0).
+	var totalHistBytes int
+	for _, m := range req.Messages[1:] {
+		totalHistBytes += len(m.Content)
+	}
+	const chatHistoryByteBudget = 8192
+	if totalHistBytes > chatHistoryByteBudget {
+		t.Errorf("LOW-4: history byte budget exceeded: %d bytes in request (limit %d)",
+			totalHistBytes, chatHistoryByteBudget)
 	}
 }
 

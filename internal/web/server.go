@@ -168,6 +168,12 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		msg = string(b)
 	}
+	// LOW-2: reject empty / whitespace-only messages before touching the provider.
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		http.Error(w, "empty message", http.StatusBadRequest)
+		return
+	}
 	if s.provider == nil {
 		http.Error(w, "chat provider not configured", http.StatusInternalServerError)
 		return
