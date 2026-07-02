@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/store"
 	"github.com/amjadjibon/kscribe/internal/web/templates"
 	"github.com/amjadjibon/kscribe/public"
@@ -24,17 +26,20 @@ type StoreReader interface {
 	CountIncidents(ctx context.Context, filter store.IncidentFilter) (int, error)
 	CountIncidentsByPhase(ctx context.Context, filter store.IncidentFilter) (map[string]int, error)
 	GetIncident(ctx context.Context, namespace, name string) (*store.IncidentDetail, error)
+	AppendChatMessage(ctx context.Context, namespace, name, role, content string) error
+	ListChatMessages(ctx context.Context, namespace, name string) ([]store.ChatMessage, error)
 }
 
 // Server holds the web server dependencies.
 type Server struct {
-	store  StoreReader
-	broker *Broker
+	store    StoreReader
+	broker   *Broker
+	provider agent.Provider
 }
 
 // New returns a Server.
-func New(st StoreReader, br *Broker) *Server {
-	return &Server{store: st, broker: br}
+func New(st StoreReader, br *Broker, provider agent.Provider) *Server {
+	return &Server{store: st, broker: br, provider: provider}
 }
 
 // Handler returns the chi router as an http.Handler.
@@ -44,6 +49,8 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/", s.list)
 	r.Get("/incidents/{namespace}/{name}", s.detail)
 	r.Get("/incidents/{namespace}/{name}/stream", s.stream)
+	r.Post("/incidents/{namespace}/{name}/chat", s.chatPost)
+	r.Get("/incidents/{namespace}/{name}/chat/stream", s.chatStream)
 	// ponytail: inline cache header wrapper — no middleware stack needed for a single route
 	static := http.FileServer(http.FS(public.FS))
 	r.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +141,62 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	ch, cancel := s.broker.Subscribe(id)
+	defer cancel()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			writeSSE(w, ev.HTML)
+			flusher.Flush()
+		}
+	}
+}
+
+// chatPost accepts a user message, runs the chat pipeline, and returns 200/500.
+func (s *Server) chatPost(w http.ResponseWriter, r *http.Request) {
+	ns := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+	_ = r.ParseForm()
+	msg := r.FormValue("message")
+	if msg == "" {
+		b, _ := io.ReadAll(r.Body)
+		msg = string(b)
+	}
+	if s.provider == nil {
+		http.Error(w, "chat provider not configured", http.StatusInternalServerError)
+		return
+	}
+	if err := RunChat(r.Context(), s.store, s.provider, s.broker, ns, name, msg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// chatStream streams SSE events for the per-incident chat topic.
+func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
+	ns := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+	topic := ns + "/" + name + "/chat"
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ch, cancel := s.broker.Subscribe(topic)
 	defer cancel()
 
 	for {

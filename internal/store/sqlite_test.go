@@ -611,3 +611,81 @@ func TestListIncidentsAndGetIncident(t *testing.T) {
 		t.Errorf("expected 2 results with limit=2, got %d", len(limited))
 	}
 }
+
+// TestChatMessageRoundTrip verifies AppendChatMessage + ListChatMessages order and isolation.
+func TestChatMessageRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Seed a parent incident (FK not enforced on chat_messages but good practice).
+	if err := s.UpsertIncident(ctx, Incident{Namespace: "ns", Name: "chat-inc", Phase: "Done"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Append three turns.
+	turns := []struct{ role, content string }{
+		{"user", "what happened?"},
+		{"assistant", "OOM kill"},
+		{"user", "how to fix?"},
+	}
+	for _, turn := range turns {
+		if err := s.AppendChatMessage(ctx, "ns", "chat-inc", turn.role, turn.content); err != nil {
+			t.Fatalf("AppendChatMessage(%s): %v", turn.role, err)
+		}
+	}
+
+	msgs, err := s.ListChatMessages(ctx, "ns", "chat-inc")
+	if err != nil {
+		t.Fatalf("ListChatMessages: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("want 3 messages, got %d", len(msgs))
+	}
+	// ORDER BY id ASC — first inserted comes first.
+	for i, want := range turns {
+		if msgs[i].Role != want.role {
+			t.Errorf("[%d] role = %q, want %q", i, msgs[i].Role, want.role)
+		}
+		if msgs[i].Content != want.content {
+			t.Errorf("[%d] content = %q, want %q", i, msgs[i].Content, want.content)
+		}
+		if msgs[i].ID <= 0 {
+			t.Errorf("[%d] ID not set", i)
+		}
+		if msgs[i].CreatedAt.IsZero() {
+			t.Errorf("[%d] CreatedAt not set", i)
+		}
+	}
+	// IDs must be ascending.
+	if msgs[0].ID >= msgs[1].ID || msgs[1].ID >= msgs[2].ID {
+		t.Errorf("IDs not ascending: %d %d %d", msgs[0].ID, msgs[1].ID, msgs[2].ID)
+	}
+
+	// Isolation: different incident returns empty.
+	other, err := s.ListChatMessages(ctx, "ns", "other-inc")
+	if err != nil {
+		t.Fatalf("ListChatMessages other: %v", err)
+	}
+	if len(other) != 0 {
+		t.Errorf("want 0 messages for other incident, got %d", len(other))
+	}
+}
+
+// TestMigration0003ChatTable verifies the 0003 migration ran and the table exists.
+func TestMigration0003ChatTable(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	var version int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT version FROM schema_migrations WHERE version = 3",
+	).Scan(&version); err != nil {
+		t.Fatalf("migration version 3 not recorded: %v", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT id, namespace, name, role, content, created_at FROM chat_messages LIMIT 0",
+	).Err(); err != nil {
+		t.Fatalf("chat_messages table or columns missing: %v", err)
+	}
+}

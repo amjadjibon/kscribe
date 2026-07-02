@@ -14,6 +14,7 @@ import (
 
 	"github.com/bytedance/sonic"
 
+	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/enricher"
 	"github.com/amjadjibon/kscribe/internal/store"
 	"github.com/amjadjibon/kscribe/internal/web"
@@ -50,9 +51,9 @@ func filteredIncidents(all []store.Incident, filter store.IncidentFilter) []stor
 
 // fakeStore implements web.StoreReader in memory.
 type fakeStore struct {
-	incidents map[string]*store.IncidentDetail // key: namespace/name
-	// orderedKeys is optional; if set, ListIncidentsPage respects this order.
-	orderedKeys []string
+	incidents    map[string]*store.IncidentDetail // key: namespace/name
+	orderedKeys  []string                         // optional; if set, ListIncidentsPage respects this order
+	chatMessages []store.ChatMessage
 }
 
 func (f *fakeStore) orderedIncidents() []store.Incident {
@@ -115,6 +116,25 @@ func (f *fakeStore) GetIncident(_ context.Context, namespace, name string) (*sto
 	return d, nil
 }
 
+func (f *fakeStore) AppendChatMessage(_ context.Context, namespace, name, role, content string) error {
+	f.chatMessages = append(f.chatMessages, store.ChatMessage{
+		ID:        int64(len(f.chatMessages) + 1),
+		Namespace: namespace, Name: name, Role: role, Content: content,
+		CreatedAt: time.Now().UTC(),
+	})
+	return nil
+}
+
+func (f *fakeStore) ListChatMessages(_ context.Context, namespace, name string) ([]store.ChatMessage, error) {
+	var out []store.ChatMessage
+	for _, m := range f.chatMessages {
+		if m.Namespace == namespace && m.Name == name {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
 type notFoundErr struct{ id string }
 
 func (e *notFoundErr) Error() string { return "not found: " + e.id }
@@ -163,7 +183,7 @@ func seedStore() *fakeStore {
 func newTestServer(t *testing.T) (*httptest.Server, *web.Broker) {
 	t.Helper()
 	broker := web.NewBroker()
-	srv := web.New(seedStore(), broker)
+	srv := web.New(seedStore(), broker, nil)
 	return httptest.NewServer(srv.Handler()), broker
 }
 
@@ -331,7 +351,7 @@ func seedLargeStore() *fakeStore {
 // TestListPager asserts pagination controls appear with >25 incidents.
 func TestListPager(t *testing.T) {
 	broker := web.NewBroker()
-	srv := web.New(seedLargeStore(), broker)
+	srv := web.New(seedLargeStore(), broker, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -373,7 +393,7 @@ func TestListPager(t *testing.T) {
 // TestListTotalsFromDB asserts stat card counts reflect all incidents, not just the visible page.
 func TestListTotalsFromDB(t *testing.T) {
 	broker := web.NewBroker()
-	srv := web.New(seedLargeStore(), broker)
+	srv := web.New(seedLargeStore(), broker, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -465,7 +485,7 @@ func TestDetailContextAndReasoning(t *testing.T) {
 	}}
 
 	broker := web.NewBroker()
-	srv := web.New(st, broker)
+	srv := web.New(st, broker, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -541,7 +561,7 @@ func TestDetailContextXSS(t *testing.T) {
 	}}
 
 	broker := web.NewBroker()
-	srv := web.New(st, broker)
+	srv := web.New(st, broker, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -605,7 +625,7 @@ func TestListStoreErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			broker := web.NewBroker()
-			srv := web.New(tc.st, broker)
+			srv := web.New(tc.st, broker, nil)
 			ts := httptest.NewServer(srv.Handler())
 			defer ts.Close()
 
@@ -681,7 +701,7 @@ func TestListHTMLAssetsWired(t *testing.T) {
 func TestEmptyStorePager(t *testing.T) {
 	empty := &fakeStore{incidents: map[string]*store.IncidentDetail{}}
 	broker := web.NewBroker()
-	srv := web.New(empty, broker)
+	srv := web.New(empty, broker, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -802,7 +822,7 @@ func TestFilterPreservingPager(t *testing.T) {
 	f.orderedKeys = keys
 
 	broker := web.NewBroker()
-	srv := web.New(f, broker)
+	srv := web.New(f, broker, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -853,7 +873,7 @@ func TestDetailSanitization(t *testing.T) {
 		},
 	}}
 	broker := web.NewBroker()
-	srv := web.New(xssStore, broker)
+	srv := web.New(xssStore, broker, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -936,5 +956,130 @@ func TestSSE(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no SSE data: frame received")
+	}
+}
+
+// capturingProvider is a fake agent.StreamingProvider that emits a fixed delta
+// and records the last Request it received.
+type capturingProvider struct {
+	delta   string
+	lastReq agent.Request
+}
+
+func (p *capturingProvider) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
+	p.lastReq = req
+	return agent.Response{Choices: []agent.Choice{{Message: agent.Message{Content: p.delta}}}}, nil
+}
+
+func (p *capturingProvider) CompleteStream(_ context.Context, req agent.Request, onDelta func(string) error) (agent.Response, error) {
+	p.lastReq = req
+	if err := onDelta(p.delta); err != nil {
+		return agent.Response{}, err
+	}
+	return agent.Response{Choices: []agent.Choice{{Message: agent.Message{Content: p.delta}}}}, nil
+}
+
+// TestRunChat asserts SEC-002 (escaped SSE frames), message persistence,
+// history inclusion, and bounded system message (CON-007).
+func TestRunChat(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "chat-incident"
+
+	// Large contextJSON to verify the 4096-byte truncation.
+	bigCtx := make([]byte, 8000)
+	for i := range bigCtx {
+		bigCtx[i] = 'x'
+	}
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+			Diagnoses: []store.Diagnosis{{
+				Summary:     "OOM kill",
+				RootCause:   "memory leak in sidecar",
+				ContextJSON: bigCtx,
+			}},
+		},
+	}}
+
+	// Pre-seed 2 prior messages to verify history inclusion.
+	_ = st.AppendChatMessage(ctx, ns, name, "user", "first question")
+	_ = st.AppendChatMessage(ctx, ns, name, "assistant", "first answer")
+
+	// XSS payload from the "model".
+	xssPayload := `<script>alert(1)</script>`
+	prov := &capturingProvider{delta: xssPayload}
+
+	broker := web.NewBroker()
+	topic := ns + "/" + name + "/chat"
+	ch, cancelSub := broker.Subscribe(topic)
+	defer cancelSub()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "new question"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	// Drain published events.
+	var events []web.Event
+drain:
+	for {
+		select {
+		case ev := <-ch:
+			events = append(events, ev)
+		default:
+			break drain
+		}
+	}
+
+	// SEC-002: no raw <script> on the wire.
+	if len(events) == 0 {
+		t.Fatal("expected at least one published event")
+	}
+	for _, ev := range events {
+		if strings.Contains(ev.HTML, "<script>") {
+			t.Errorf("SEC-002: raw <script> in SSE payload: %q", ev.HTML)
+		}
+		if !strings.Contains(ev.HTML, "&lt;script&gt;") {
+			t.Errorf("SEC-002: escaped form missing from SSE payload: %q", ev.HTML)
+		}
+	}
+
+	// Message persistence: user + assistant both stored.
+	msgs, err := st.ListChatMessages(ctx, ns, name)
+	if err != nil {
+		t.Fatalf("ListChatMessages: %v", err)
+	}
+	// 2 seeded + 1 new user + 1 assistant = 4
+	if len(msgs) != 4 {
+		t.Fatalf("want 4 chat messages, got %d", len(msgs))
+	}
+	if msgs[2].Role != "user" || msgs[2].Content != "new question" {
+		t.Errorf("user message not persisted correctly: %+v", msgs[2])
+	}
+	if msgs[3].Role != "assistant" || msgs[3].Content != xssPayload {
+		t.Errorf("assistant message not persisted correctly: %+v", msgs[3])
+	}
+
+	// History: provider received system + 3 messages (2 seeded + new user).
+	req := prov.lastReq
+	if len(req.Messages) < 2 {
+		t.Fatalf("expected messages in request, got %d", len(req.Messages))
+	}
+	sysMsg := req.Messages[0]
+	if sysMsg.Role != "system" {
+		t.Errorf("first message role = %q, want system", sysMsg.Role)
+	}
+	// System message must contain RCA summary and be bounded.
+	if !strings.Contains(sysMsg.Content, "OOM kill") {
+		t.Errorf("system message missing RCA summary, got: %q", sysMsg.Content[:min(200, len(sysMsg.Content))])
+	}
+	// contextJSON budget: system message should not carry the full 8000-byte context.
+	// Allow generous headroom for prefix text; 6000 bytes is well below 8000.
+	if len(sysMsg.Content) > 6000 {
+		t.Errorf("system message too large (%d bytes), context budget not applied", len(sysMsg.Content))
+	}
+	// History messages included (seeded + new user = 3).
+	if len(req.Messages) != 4 { // system + 2 seeded + 1 new user
+		t.Errorf("want 4 messages in request (system + 3 history), got %d", len(req.Messages))
 	}
 }

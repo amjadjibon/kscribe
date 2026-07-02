@@ -319,6 +319,44 @@ ORDER BY created_at ASC`
 	return &IncidentDetail{Incident: inc, Diagnoses: diags}, nil
 }
 
+// ChatMessage is a single turn in a per-incident chat conversation.
+type ChatMessage struct {
+	ID        int64
+	Namespace string
+	Name      string
+	Role      string // "user" | "assistant"
+	Content   string
+	CreatedAt time.Time
+}
+
+// AppendChatMessage inserts a chat turn for (namespace, name).
+func (s *Store) AppendChatMessage(ctx context.Context, namespace, name, role, content string) error {
+	const q = `INSERT INTO chat_messages (namespace, name, role, content, created_at) VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, q, namespace, name, role, content, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// ListChatMessages returns all chat turns for (namespace, name) ordered by id ASC.
+func (s *Store) ListChatMessages(ctx context.Context, namespace, name string) ([]ChatMessage, error) {
+	const q = `SELECT id, namespace, name, role, content, created_at FROM chat_messages WHERE namespace = ? AND name = ? ORDER BY id ASC`
+	rows, err := s.db.QueryContext(ctx, q, namespace, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChatMessage
+	for rows.Next() {
+		var m ChatMessage
+		var createdAt string
+		if err := rows.Scan(&m.ID, &m.Namespace, &m.Name, &m.Role, &m.Content, &createdAt); err != nil {
+			return nil, err
+		}
+		m.CreatedAt = parseTime(createdAt)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface {
 	Scan(dest ...any) error
