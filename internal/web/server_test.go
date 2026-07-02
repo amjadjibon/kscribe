@@ -1198,6 +1198,224 @@ func TestChatStreamContentType(t *testing.T) {
 	}
 }
 
+// errProvider is a Provider that always returns a fixed error (no streaming).
+type errProvider struct{ err error }
+
+func (e *errProvider) Complete(_ context.Context, _ agent.Request) (agent.Response, error) {
+	return agent.Response{}, e.err
+}
+
+// TestChatPost_NilProvider asserts POST /chat with no provider returns 500.
+func TestChatPost_NilProvider(t *testing.T) {
+	ts, _ := newTestServer(t) // nil provider
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/incidents/default/done-incident/chat",
+		"text/plain", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("want 500 for nil provider, got %d", resp.StatusCode)
+	}
+}
+
+// TestChatPost_BodyFallback asserts POST /chat reads raw body when form field is absent.
+func TestChatPost_BodyFallback(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/body-chat": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "body-chat", Phase: "Done",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		},
+	}}
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Content-Type is not application/x-www-form-urlencoded, so FormValue("message") == "".
+	resp, err := http.Post(ts.URL+"/incidents/default/body-chat/chat",
+		"text/plain", strings.NewReader("body message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	msgs, _ := st.ListChatMessages(context.Background(), "default", "body-chat")
+	if len(msgs) == 0 || msgs[0].Content != "body message" {
+		t.Errorf("body message not persisted: %+v", msgs)
+	}
+}
+
+// TestChatPost_ProviderError asserts POST /chat returns 500 when RunChat fails.
+func TestChatPost_ProviderError(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/err-chat": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "err-chat", Phase: "Done",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		},
+	}}
+	prov := &errProvider{err: errors.New("provider down")}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.PostForm(ts.URL+"/incidents/default/err-chat/chat",
+		map[string][]string{"message": {"hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("want 500 for provider error, got %d", resp.StatusCode)
+	}
+}
+
+// TestChatStream_DeliversSSE asserts the chat/stream endpoint delivers published events.
+func TestChatStream_DeliversSSE(t *testing.T) {
+	ts, broker := newTestServer(t)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/incidents/default/done-incident/chat/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("want text/event-stream, got %q", ct)
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		broker.Publish("default/done-incident/chat", web.Event{HTML: "<span>Hi</span>"})
+	}()
+
+	scanner := bufio.NewScanner(resp.Body)
+	found := false
+	for scanner.Scan() {
+		if strings.HasPrefix(scanner.Text(), "data:") {
+			found = true
+			cancel()
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no SSE data: frame received on chat/stream")
+	}
+}
+
+// TestRunChat_NoDiagnoses asserts RunChat works when the incident has no diagnoses yet
+// (system message has only the base SRE prompt, no Context section).
+func TestRunChat_NoDiagnoses(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "no-diag"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Pending"},
+			// no Diagnoses
+		},
+	}}
+	prov := &capturingProvider{delta: "fallback answer"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "what is happening?"); err != nil {
+		t.Fatalf("RunChat with no diagnoses: %v", err)
+	}
+
+	msgs, _ := st.ListChatMessages(ctx, ns, name)
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 messages (user+assistant), got %d", len(msgs))
+	}
+	// System message must not contain diagnosis fields (no summary/root cause).
+	req := prov.lastReq
+	if len(req.Messages) == 0 || req.Messages[0].Role != "system" {
+		t.Fatal("expected system message")
+	}
+	if strings.Contains(req.Messages[0].Content, "Summary:") {
+		t.Errorf("system message should have no diagnosis summary for incident with no diagnoses")
+	}
+}
+
+// TestRunChat_ProviderError asserts user message is persisted but no assistant
+// message is written when the provider fails.
+func TestRunChat_ProviderError(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "rce-diag"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+	prov := &errProvider{err: errors.New("llm down")}
+	broker := web.NewBroker()
+
+	err := web.RunChat(ctx, st, prov, broker, ns, name, "help")
+	if err == nil {
+		t.Fatal("expected error from provider failure")
+	}
+	// User message persisted; no assistant message.
+	msgs, _ := st.ListChatMessages(ctx, ns, name)
+	if len(msgs) != 1 || msgs[0].Role != "user" {
+		t.Errorf("want 1 persisted user message only, got: %+v", msgs)
+	}
+}
+
+// TestRunChat_HistoryBudget asserts the 10-message history cap is enforced:
+// when more than 10 messages are stored, only the last 10 are sent to the LLM.
+func TestRunChat_HistoryBudget(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "hist-inc"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+
+	// Seed 12 prior turns (alternating user/assistant).
+	for i := 0; i < 12; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		_ = st.AppendChatMessage(ctx, ns, name, role, fmt.Sprintf("msg-%d", i))
+	}
+
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "new question"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	// After RunChat, the new user message is also persisted; total = 13+1=14 stored.
+	// But the request must carry at most system + 10 messages.
+	req := prov.lastReq
+	// req.Messages[0] = system; rest = bounded history (max 10 items).
+	if len(req.Messages) > 11 { // 1 system + 10 history
+		t.Errorf("history budget not enforced: got %d messages in request (want ≤11)", len(req.Messages))
+	}
+}
+
 // TestChatAssistantXSS asserts a stored assistant message with <script> is NOT
 // present verbatim in the rendered detail page (SEC-001 via RenderMarkdown). TASK-021.
 func TestChatAssistantXSS(t *testing.T) {

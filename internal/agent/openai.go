@@ -135,7 +135,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta 
 		}
 		var chunk streamChunk
 		if err := sonic.UnmarshalString(payload, &chunk); err != nil {
-			return Response{}, fmt.Errorf("unmarshal chunk: %w", err)
+			continue // ponytail: skip malformed chunk; some providers emit non-JSON SSE lines
 		}
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta.Content
