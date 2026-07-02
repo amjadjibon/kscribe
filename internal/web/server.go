@@ -115,8 +115,9 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "incident not found", http.StatusNotFound)
 		return
 	}
+	msgs, _ := s.store.ListChatMessages(r.Context(), ns, name)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = templates.Layout("kscribe — "+name, templates.IncidentDetail(templates.BuildDetailView(detail))).Render(r.Context(), w)
+	_ = templates.Layout("kscribe — "+name, templates.IncidentDetail(templates.BuildDetailView(detail, msgs))).Render(r.Context(), w)
 }
 
 // stream handles SSE for a single incident. It streams Event.HTML fragments to
@@ -166,6 +167,12 @@ func (s *Server) chatPost(w http.ResponseWriter, r *http.Request) {
 	if msg == "" {
 		b, _ := io.ReadAll(r.Body)
 		msg = string(b)
+	}
+	// LOW-2: reject empty / whitespace-only messages before touching the provider.
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		http.Error(w, "empty message", http.StatusBadRequest)
+		return
 	}
 	if s.provider == nil {
 		http.Error(w, "chat provider not configured", http.StatusInternalServerError)

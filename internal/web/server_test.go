@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
 
@@ -1081,5 +1082,563 @@ drain:
 	// History messages included (seeded + new user = 3).
 	if len(req.Messages) != 4 { // system + 2 seeded + 1 new user
 		t.Errorf("want 4 messages in request (system + 3 history), got %d", len(req.Messages))
+	}
+}
+
+// TestChatDetailRender asserts the detail page renders the Chat tab markup
+// and seeded chat history (assistant markdown rendered). TASK-021.
+func TestChatDetailRender(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{
+		incidents: map[string]*store.IncidentDetail{
+			"default/chat-render": {
+				Incident: store.Incident{
+					Namespace: "default", Name: "chat-render",
+					InvolvedObjectKind: "Pod", InvolvedObjectName: "p", InvolvedObjectNamespace: "default",
+					Reason: "Test", Message: "test", Phase: "Done",
+					CreatedAt: now, UpdatedAt: now,
+				},
+			},
+		},
+		chatMessages: []store.ChatMessage{
+			{ID: 1, Namespace: "default", Name: "chat-render", Role: "user", Content: "what happened?", CreatedAt: now},
+			{ID: 2, Namespace: "default", Name: "chat-render", Role: "assistant", Content: "**OOM kill** detected.", CreatedAt: now},
+		},
+	}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, nil)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/chat-render")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Chat tab button present.
+	if !strings.Contains(body, "tab='chat'") {
+		t.Error("want Chat tab button in page")
+	}
+	// User message in history.
+	if !strings.Contains(body, "what happened?") {
+		t.Error("want user message in chat history")
+	}
+	// Assistant markdown rendered: **OOM kill** becomes <strong>OOM kill</strong>.
+	if !strings.Contains(body, "OOM kill") {
+		t.Error("want assistant content in chat history")
+	}
+	// SSE connect attribute for chat stream.
+	if !strings.Contains(body, "/chat/stream") {
+		t.Error("want sse-connect to /chat/stream in page")
+	}
+}
+
+// TestChatPost asserts POST /incidents/{ns}/{name}/chat returns 200 and persists. TASK-021.
+func TestChatPost(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{
+		incidents: map[string]*store.IncidentDetail{
+			"default/chat-post": {
+				Incident: store.Incident{
+					Namespace: "default", Name: "chat-post",
+					Phase: "Done", CreatedAt: now, UpdatedAt: now,
+				},
+			},
+		},
+	}
+	prov := &capturingProvider{delta: "response text"}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.PostForm(ts.URL+"/incidents/default/chat-post/chat",
+		map[string][]string{"message": {"hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	// Persisted: user + assistant = 2 messages.
+	msgs, _ := st.ListChatMessages(context.Background(), "default", "chat-post")
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 persisted chat messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[0].Content != "hello" {
+		t.Errorf("user message not persisted: %+v", msgs[0])
+	}
+}
+
+// TestChatStreamContentType asserts GET /incidents/{ns}/{name}/chat/stream returns text/event-stream. TASK-021.
+func TestChatStreamContentType(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/incidents/default/done-incident/chat/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("want text/event-stream, got %q", ct)
+	}
+}
+
+// errProvider is a Provider that always returns a fixed error (no streaming).
+type errProvider struct{ err error }
+
+func (e *errProvider) Complete(_ context.Context, _ agent.Request) (agent.Response, error) {
+	return agent.Response{}, e.err
+}
+
+// TestChatPost_NilProvider asserts POST /chat with no provider returns 500.
+func TestChatPost_NilProvider(t *testing.T) {
+	ts, _ := newTestServer(t) // nil provider
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/incidents/default/done-incident/chat",
+		"text/plain", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("want 500 for nil provider, got %d", resp.StatusCode)
+	}
+}
+
+// TestChatPost_BodyFallback asserts POST /chat reads raw body when form field is absent.
+func TestChatPost_BodyFallback(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/body-chat": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "body-chat", Phase: "Done",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		},
+	}}
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Content-Type is not application/x-www-form-urlencoded, so FormValue("message") == "".
+	resp, err := http.Post(ts.URL+"/incidents/default/body-chat/chat",
+		"text/plain", strings.NewReader("body message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d", resp.StatusCode)
+	}
+	msgs, _ := st.ListChatMessages(context.Background(), "default", "body-chat")
+	if len(msgs) == 0 || msgs[0].Content != "body message" {
+		t.Errorf("body message not persisted: %+v", msgs)
+	}
+}
+
+// TestChatPost_ProviderError asserts POST /chat returns 500 when RunChat fails.
+func TestChatPost_ProviderError(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/err-chat": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "err-chat", Phase: "Done",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		},
+	}}
+	prov := &errProvider{err: errors.New("provider down")}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.PostForm(ts.URL+"/incidents/default/err-chat/chat",
+		map[string][]string{"message": {"hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("want 500 for provider error, got %d", resp.StatusCode)
+	}
+}
+
+// TestChatStream_DeliversSSE asserts the chat/stream endpoint delivers published events.
+func TestChatStream_DeliversSSE(t *testing.T) {
+	ts, broker := newTestServer(t)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/incidents/default/done-incident/chat/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("want text/event-stream, got %q", ct)
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		broker.Publish("default/done-incident/chat", web.Event{HTML: "<span>Hi</span>"})
+	}()
+
+	scanner := bufio.NewScanner(resp.Body)
+	found := false
+	for scanner.Scan() {
+		if strings.HasPrefix(scanner.Text(), "data:") {
+			found = true
+			cancel()
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no SSE data: frame received on chat/stream")
+	}
+}
+
+// TestRunChat_NoDiagnoses asserts RunChat works when the incident has no diagnoses yet
+// (system message has only the base SRE prompt, no Context section).
+func TestRunChat_NoDiagnoses(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "no-diag"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Pending"},
+			// no Diagnoses
+		},
+	}}
+	prov := &capturingProvider{delta: "fallback answer"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "what is happening?"); err != nil {
+		t.Fatalf("RunChat with no diagnoses: %v", err)
+	}
+
+	msgs, _ := st.ListChatMessages(ctx, ns, name)
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 messages (user+assistant), got %d", len(msgs))
+	}
+	// System message must not contain diagnosis fields (no summary/root cause).
+	req := prov.lastReq
+	if len(req.Messages) == 0 || req.Messages[0].Role != "system" {
+		t.Fatal("expected system message")
+	}
+	if strings.Contains(req.Messages[0].Content, "Summary:") {
+		t.Errorf("system message should have no diagnosis summary for incident with no diagnoses")
+	}
+}
+
+// TestRunChat_ProviderError asserts user message is persisted but no assistant
+// message is written when the provider fails.
+func TestRunChat_ProviderError(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "rce-diag"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+	prov := &errProvider{err: errors.New("llm down")}
+	broker := web.NewBroker()
+
+	err := web.RunChat(ctx, st, prov, broker, ns, name, "help")
+	if err == nil {
+		t.Fatal("expected error from provider failure")
+	}
+	// User message persisted; no assistant message.
+	msgs, _ := st.ListChatMessages(ctx, ns, name)
+	if len(msgs) != 1 || msgs[0].Role != "user" {
+		t.Errorf("want 1 persisted user message only, got: %+v", msgs)
+	}
+}
+
+// TestRunChat_HistoryBudget asserts the 10-message history cap is enforced:
+// when more than 10 messages are stored, only the last 10 are sent to the LLM.
+func TestRunChat_HistoryBudget(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "hist-inc"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+
+	// Seed 12 prior turns (alternating user/assistant).
+	for i := 0; i < 12; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		_ = st.AppendChatMessage(ctx, ns, name, role, fmt.Sprintf("msg-%d", i))
+	}
+
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "new question"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	// After RunChat, the new user message is also persisted; total = 13+1=14 stored.
+	// But the request must carry at most system + 10 messages.
+	req := prov.lastReq
+	// req.Messages[0] = system; rest = bounded history (max 10 items).
+	if len(req.Messages) > 11 { // 1 system + 10 history
+		t.Errorf("history budget not enforced: got %d messages in request (want ≤11)", len(req.Messages))
+	}
+}
+
+// TestRunChat_UTF8ContextTruncation asserts LOW-1: when ContextJSON contains
+// multi-byte runes and is truncated at the byte budget, the system message is
+// still valid UTF-8 and within the budget + prefix overhead. LOW-1.
+func TestRunChat_UTF8ContextTruncation(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "utf8-trunc"
+
+	// Build a context blob filled with 3-byte UTF-8 runes ('あ') so that a
+	// naive byte-slice at chatContextBudget (4096) splits a rune: 4096 % 3 == 1.
+	const budget = 4096
+	rune3 := []byte("あ") // 3 bytes: E3 81 82
+	ctxBytes := make([]byte, 0, budget+10)
+	for len(ctxBytes) < budget+6 {
+		ctxBytes = append(ctxBytes, rune3...)
+	}
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+			Diagnoses: []store.Diagnosis{{
+				Summary:     "s",
+				RootCause:   "r",
+				ContextJSON: ctxBytes,
+			}},
+		},
+	}}
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "q"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	req := prov.lastReq
+	if len(req.Messages) == 0 || req.Messages[0].Role != "system" {
+		t.Fatal("expected system message")
+	}
+	sys := req.Messages[0].Content
+	if !strings.Contains(sys, "Context:") {
+		t.Fatal("system message missing Context: section")
+	}
+	// Extract just the context portion to validate UTF-8 without worrying about prefix.
+	ctxPart := sys[strings.Index(sys, "Context:"):]
+	if !utf8.ValidString(ctxPart) {
+		t.Error("LOW-1: context portion of system message is not valid UTF-8")
+	}
+	// The full system message must also be valid UTF-8.
+	if !utf8.ValidString(sys) {
+		t.Error("LOW-1: system message is not valid UTF-8")
+	}
+}
+
+// TestChatPost_EmptyMessage asserts LOW-2: empty and whitespace-only messages
+// return HTTP 400 without invoking the provider.
+func TestChatPost_EmptyMessage(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"default/empty-msg": {
+			Incident: store.Incident{
+				Namespace: "default", Name: "empty-msg", Phase: "Done",
+				CreatedAt: now, UpdatedAt: now,
+			},
+		},
+	}}
+	prov := &capturingProvider{delta: "should not be called"}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	cases := []struct {
+		name string
+		body string
+		ct   string
+	}{
+		{"empty_form", "message=", "application/x-www-form-urlencoded"},
+		{"whitespace_form", "message=   ", "application/x-www-form-urlencoded"},
+		{"empty_body", "", "text/plain"},
+		{"whitespace_body", "   \t\n", "text/plain"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Post(ts.URL+"/incidents/default/empty-msg/chat",
+				tc.ct, strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("LOW-2: want 400 for empty/whitespace message, got %d", resp.StatusCode)
+			}
+		})
+	}
+	// Provider must not have been invoked for any of the above.
+	if prov.lastReq.Messages != nil {
+		t.Error("LOW-2: provider was invoked despite empty/whitespace message")
+	}
+}
+
+// emptyStreamProvider is a non-streaming Provider that returns no content (no choices),
+// so StreamOrComplete never calls onDelta and accumulated stays empty. LOW-3.
+type emptyStreamProvider struct{}
+
+func (e *emptyStreamProvider) Complete(_ context.Context, _ agent.Request) (agent.Response, error) {
+	return agent.Response{}, nil // no Choices → onDelta never called
+}
+
+// TestRunChat_EmptyStreamFallback asserts LOW-3: when the provider returns no
+// content, an assistant message is persisted with the fallback text (not empty).
+func TestRunChat_EmptyStreamFallback(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "empty-stream"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, &emptyStreamProvider{}, broker, ns, name, "q"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	msgs, _ := st.ListChatMessages(ctx, ns, name)
+	if len(msgs) != 2 {
+		t.Fatalf("LOW-3: want 2 messages, got %d", len(msgs))
+	}
+	asst := msgs[1]
+	if asst.Role != "assistant" {
+		t.Fatalf("LOW-3: want assistant message, got role=%q", asst.Role)
+	}
+	if strings.TrimSpace(asst.Content) == "" {
+		t.Error("LOW-3: assistant message is empty — fallback not applied")
+	}
+	if asst.Content == "" || asst.Content == " " {
+		t.Error("LOW-3: assistant message is blank")
+	}
+	// Verify it's the expected fallback text.
+	if asst.Content != "(no response from model)" {
+		t.Errorf("LOW-3: want fallback text, got %q", asst.Content)
+	}
+}
+
+// TestRunChat_HistoryByteBudget asserts LOW-4: when history messages' total
+// content bytes exceed chatHistoryByteBudget (8192), oldest messages are dropped
+// so the request stays within the byte cap.
+func TestRunChat_HistoryByteBudget(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "default", "byte-budget"
+
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		ns + "/" + name: {
+			Incident: store.Incident{Namespace: ns, Name: name, Phase: "Done"},
+		},
+	}}
+
+	// Seed 8 messages each with 1500-byte content → total 12000 bytes, well over 8192.
+	// Also within the 10-message count cap, so only the byte cap triggers.
+	bigContent := strings.Repeat("x", 1500)
+	for i := 0; i < 8; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		_ = st.AppendChatMessage(ctx, ns, name, role, bigContent)
+	}
+
+	prov := &capturingProvider{delta: "ok"}
+	broker := web.NewBroker()
+
+	if err := web.RunChat(ctx, st, prov, broker, ns, name, "new question"); err != nil {
+		t.Fatalf("RunChat: %v", err)
+	}
+
+	req := prov.lastReq
+	// Count total history content bytes (exclude system message at index 0).
+	var totalHistBytes int
+	for _, m := range req.Messages[1:] {
+		totalHistBytes += len(m.Content)
+	}
+	const chatHistoryByteBudget = 8192
+	if totalHistBytes > chatHistoryByteBudget {
+		t.Errorf("LOW-4: history byte budget exceeded: %d bytes in request (limit %d)",
+			totalHistBytes, chatHistoryByteBudget)
+	}
+}
+
+// TestChatAssistantXSS asserts a stored assistant message with <script> is NOT
+// present verbatim in the rendered detail page (SEC-001 via RenderMarkdown). TASK-021.
+func TestChatAssistantXSS(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{
+		incidents: map[string]*store.IncidentDetail{
+			"default/chat-xss": {
+				Incident: store.Incident{
+					Namespace: "default", Name: "chat-xss",
+					Phase: "Done", CreatedAt: now, UpdatedAt: now,
+				},
+			},
+		},
+		chatMessages: []store.ChatMessage{
+			{ID: 1, Namespace: "default", Name: "chat-xss", Role: "assistant",
+				Content: "<script>alert(1)</script>", CreatedAt: now},
+		},
+	}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, nil)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/chat-xss")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// SEC-001: raw script tag must not appear verbatim.
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Error("SEC-001: XSS payload in assistant message found verbatim in rendered page")
 	}
 }

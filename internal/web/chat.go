@@ -4,13 +4,15 @@ import (
 	"context"
 	"html"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/amjadjibon/kscribe/internal/agent"
 )
 
 const (
-	chatContextBudget = 4096 // max bytes of context_json sent to LLM (CON-007)
-	chatHistoryLimit  = 10   // last N chat turns included in the request
+	chatContextBudget     = 4096 // max bytes of context_json sent to LLM (CON-007)
+	chatHistoryLimit      = 10   // last N chat turns included in the request (count cap)
+	chatHistoryByteBudget = 8192 // max total content bytes of history sent to LLM (LOW-4)
 )
 
 // RunChat persists the user message, assembles an LLM request with bounded
@@ -52,7 +54,11 @@ func RunChat(
 		sys.WriteString(d.RootCause)
 		ctxBytes := d.ContextJSON
 		if len(ctxBytes) > chatContextBudget {
-			ctxBytes = ctxBytes[:chatContextBudget] // ponytail: hard truncate; JSON may be invalid tail
+			ctxBytes = ctxBytes[:chatContextBudget]
+			// LOW-1: back up to a valid UTF-8 boundary so the truncated slice is valid.
+			for len(ctxBytes) > 0 && !utf8.Valid(ctxBytes) {
+				ctxBytes = ctxBytes[:len(ctxBytes)-1]
+			}
 		}
 		sys.WriteString("\n\nContext: ")
 		sys.Write(ctxBytes)
@@ -65,6 +71,15 @@ func RunChat(
 	}
 	if len(history) > chatHistoryLimit {
 		history = history[len(history)-chatHistoryLimit:]
+	}
+	// LOW-4: also cap total history content bytes, dropping oldest messages first.
+	var histBytes int
+	for _, h := range history {
+		histBytes += len(h.Content)
+	}
+	for histBytes > chatHistoryByteBudget && len(history) > 0 {
+		histBytes -= len(history[0].Content)
+		history = history[1:]
 	}
 
 	msgs := make([]agent.Message, 0, 1+len(history))
@@ -89,5 +104,11 @@ func RunChat(
 	}
 
 	// 5. Persist assistant reply (authoritative; unescaped raw text).
-	return st.AppendChatMessage(ctx, ns, name, "assistant", accumulated.String())
+	// LOW-3: if the stream produced no content, persist a visible fallback so the
+	// conversation stays coherent rather than storing a silent empty message.
+	reply := accumulated.String()
+	if strings.TrimSpace(reply) == "" {
+		reply = "(no response from model)"
+	}
+	return st.AppendChatMessage(ctx, ns, name, "assistant", reply)
 }
