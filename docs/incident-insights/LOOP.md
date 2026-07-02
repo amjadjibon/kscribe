@@ -23,11 +23,11 @@ last_review_base: '6fcb2af'
 
 | Phase   | Branch                  | PR URL | Base                    | Status  |
 |---------|-------------------------|--------|-------------------------|---------|
-| phase-1 | incident-insights-phase-1 | 47322a3    | main                    | implemented |
-| phase-2 | incident-insights-phase-2 | 885a93f    | incident-insights-phase-1 | implemented |
-| phase-3 | incident-insights-phase-3 | e53851a    | incident-insights-phase-2 | implemented |
-| phase-4 | incident-insights-phase-4 | 5e3241e    | incident-insights-phase-3 | implemented |
-| phase-5 | incident-insights-phase-5 | d6d4645    | incident-insights-phase-4 | implemented |
+| phase-1 | incident-insights-phase-1 | https://github.com/amjadjibon/kscribe/pull/22     | main                    | PR open |
+| phase-2 | incident-insights-phase-2 | https://github.com/amjadjibon/kscribe/pull/23     | incident-insights-phase-1 | PR open |
+| phase-3 | incident-insights-phase-3 | https://github.com/amjadjibon/kscribe/pull/24     | incident-insights-phase-2 | PR open |
+| phase-4 | incident-insights-phase-4 | https://github.com/amjadjibon/kscribe/pull/25     | incident-insights-phase-3 | PR open |
+| phase-5 | incident-insights-phase-5 | https://github.com/amjadjibon/kscribe/pull/26     | incident-insights-phase-4 | PR open |
 
 ## Active Worktrees
 
