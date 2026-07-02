@@ -8,7 +8,7 @@ max_phases: 6
 max_agents: 3
 current_iteration: 1
 status: running
-last_review_base: ''
+last_review_base: '6fcb2af'
 ---
 
 # Dev Loop: incident-insights
@@ -38,6 +38,6 @@ last_review_base: ''
 
 ### Iteration 1
 - [x] implement-plan (sequential, 5 phases)
-- [ ] qa
+- [x] qa (coverage up, CompleteStream malformed-chunk bug fixed)
 - [ ] code-review
 - [ ] decide
