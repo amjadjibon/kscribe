@@ -115,8 +115,9 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "incident not found", http.StatusNotFound)
 		return
 	}
+	msgs, _ := s.store.ListChatMessages(r.Context(), ns, name)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = templates.Layout("kscribe — "+name, templates.IncidentDetail(templates.BuildDetailView(detail))).Render(r.Context(), w)
+	_ = templates.Layout("kscribe — "+name, templates.IncidentDetail(templates.BuildDetailView(detail, msgs))).Render(r.Context(), w)
 }
 
 // stream handles SSE for a single incident. It streams Event.HTML fragments to

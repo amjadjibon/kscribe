@@ -21,16 +21,17 @@ type DiagnosisView struct {
 	TraceSteps []TraceStep        // empty when TraceJSON is empty/invalid
 }
 
-// IncidentDetailView wraps IncidentDetail with decoded diagnosis views.
+// IncidentDetailView wraps IncidentDetail with decoded diagnosis views and chat history.
 type IncidentDetailView struct {
 	*store.IncidentDetail
 	DiagnosisViews []DiagnosisView
+	ChatMessages   []store.ChatMessage
 }
 
 // BuildDetailView decodes context_json and trace_json for each diagnosis.
 // CON-003: uses sonic, not encoding/json.
-func BuildDetailView(d *store.IncidentDetail) *IncidentDetailView {
-	v := &IncidentDetailView{IncidentDetail: d}
+func BuildDetailView(d *store.IncidentDetail, msgs []store.ChatMessage) *IncidentDetailView {
+	v := &IncidentDetailView{IncidentDetail: d, ChatMessages: msgs}
 	for _, diag := range d.Diagnoses {
 		dv := DiagnosisView{Diagnosis: diag}
 		if len(diag.ContextJSON) > 0 {

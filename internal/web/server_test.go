@@ -1083,3 +1083,155 @@ drain:
 		t.Errorf("want 4 messages in request (system + 3 history), got %d", len(req.Messages))
 	}
 }
+
+// TestChatDetailRender asserts the detail page renders the Chat tab markup
+// and seeded chat history (assistant markdown rendered). TASK-021.
+func TestChatDetailRender(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{
+		incidents: map[string]*store.IncidentDetail{
+			"default/chat-render": {
+				Incident: store.Incident{
+					Namespace: "default", Name: "chat-render",
+					InvolvedObjectKind: "Pod", InvolvedObjectName: "p", InvolvedObjectNamespace: "default",
+					Reason: "Test", Message: "test", Phase: "Done",
+					CreatedAt: now, UpdatedAt: now,
+				},
+			},
+		},
+		chatMessages: []store.ChatMessage{
+			{ID: 1, Namespace: "default", Name: "chat-render", Role: "user", Content: "what happened?", CreatedAt: now},
+			{ID: 2, Namespace: "default", Name: "chat-render", Role: "assistant", Content: "**OOM kill** detected.", CreatedAt: now},
+		},
+	}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, nil)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/chat-render")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// Chat tab button present.
+	if !strings.Contains(body, "tab='chat'") {
+		t.Error("want Chat tab button in page")
+	}
+	// User message in history.
+	if !strings.Contains(body, "what happened?") {
+		t.Error("want user message in chat history")
+	}
+	// Assistant markdown rendered: **OOM kill** becomes <strong>OOM kill</strong>.
+	if !strings.Contains(body, "OOM kill") {
+		t.Error("want assistant content in chat history")
+	}
+	// SSE connect attribute for chat stream.
+	if !strings.Contains(body, "/chat/stream") {
+		t.Error("want sse-connect to /chat/stream in page")
+	}
+}
+
+// TestChatPost asserts POST /incidents/{ns}/{name}/chat returns 200 and persists. TASK-021.
+func TestChatPost(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{
+		incidents: map[string]*store.IncidentDetail{
+			"default/chat-post": {
+				Incident: store.Incident{
+					Namespace: "default", Name: "chat-post",
+					Phase: "Done", CreatedAt: now, UpdatedAt: now,
+				},
+			},
+		},
+	}
+	prov := &capturingProvider{delta: "response text"}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, prov)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.PostForm(ts.URL+"/incidents/default/chat-post/chat",
+		map[string][]string{"message": {"hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	// Persisted: user + assistant = 2 messages.
+	msgs, _ := st.ListChatMessages(context.Background(), "default", "chat-post")
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 persisted chat messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[0].Content != "hello" {
+		t.Errorf("user message not persisted: %+v", msgs[0])
+	}
+}
+
+// TestChatStreamContentType asserts GET /incidents/{ns}/{name}/chat/stream returns text/event-stream. TASK-021.
+func TestChatStreamContentType(t *testing.T) {
+	ts, _ := newTestServer(t)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/incidents/default/done-incident/chat/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("want text/event-stream, got %q", ct)
+	}
+}
+
+// TestChatAssistantXSS asserts a stored assistant message with <script> is NOT
+// present verbatim in the rendered detail page (SEC-001 via RenderMarkdown). TASK-021.
+func TestChatAssistantXSS(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{
+		incidents: map[string]*store.IncidentDetail{
+			"default/chat-xss": {
+				Incident: store.Incident{
+					Namespace: "default", Name: "chat-xss",
+					Phase: "Done", CreatedAt: now, UpdatedAt: now,
+				},
+			},
+		},
+		chatMessages: []store.ChatMessage{
+			{ID: 1, Namespace: "default", Name: "chat-xss", Role: "assistant",
+				Content: "<script>alert(1)</script>", CreatedAt: now},
+		},
+	}
+	broker := web.NewBroker()
+	srv := web.New(st, broker, nil)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/incidents/default/chat-xss")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	// SEC-001: raw script tag must not appear verbatim.
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Error("SEC-001: XSS payload in assistant message found verbatim in rendered page")
+	}
+}

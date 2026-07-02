@@ -141,6 +141,12 @@ templ IncidentDetail(d *IncidentDetailView) {
 				@click="tab='raw'"
 				role="tab"
 			>Raw</button>
+			<button
+				class="tab-button"
+				:class="{ 'tab-button-active': tab === 'chat' }"
+				@click="tab='chat'"
+				role="tab"
+			>Chat</button>
 		</div>
 		<!-- Overview tab: event info + SSE live status.
 		     x-show keeps this in the DOM so the SSE stream is not interrupted. -->
@@ -215,6 +221,60 @@ templ IncidentDetail(d *IncidentDetailView) {
 					<p>No reasoning captured.</p>
 				</div>
 			}
+		</div>
+		<!-- Chat tab: history + live SSE streaming + input form.
+		     x-show keeps SSE region mounted (CON-005). SEC-001: assistant content via RenderMarkdown. -->
+		<div x-show="tab === 'chat'">
+			<div class="chat-panel">
+				<!-- Stored history -->
+				<div class="chat-messages" id="chat-messages">
+					if len(d.ChatMessages) == 0 {
+						<div class="chat-empty">No messages yet. Ask a question below.</div>
+					} else {
+						for _, msg := range d.ChatMessages {
+							if msg.Role == "user" {
+								<div class="chat-bubble chat-bubble-user">{ msg.Content }</div>
+							} else {
+								<div class="chat-bubble chat-bubble-assistant markdown">@RenderMarkdown(msg.Content)</div>
+							}
+						}
+					}
+				</div>
+				<!-- Live streaming bubble: SSE coalesced assistant text swapped in (SEC-002: already escaped server-side). -->
+				<div
+					hx-ext="sse"
+					sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat/stream" }
+					sse-swap="message"
+					hx-swap="innerHTML"
+					id="chat-stream"
+					class="chat-bubble chat-bubble-assistant chat-streaming"
+				></div>
+				<!-- Input form: Alpine scoped to this div only. -->
+				<div class="chat-input-area" x-data="{ draft: '', pending: [] }">
+					<div class="chat-pending">
+						<template x-for="(m, i) in pending" :key="i">
+							<div class="chat-bubble chat-bubble-user" x-text="m"></div>
+						</template>
+					</div>
+					<form
+						class="chat-form"
+						hx-post={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat" }
+						hx-swap="none"
+						@submit="pending.push(draft)"
+						hx-on--after-request="draft = ''"
+					>
+						<input
+							type="text"
+							name="message"
+							x-model="draft"
+							placeholder="Ask about this incident…"
+							class="chat-input"
+							autocomplete="off"
+						/>
+						<button type="submit" class="chat-send">Send</button>
+					</form>
+				</div>
+			</div>
 		</div>
 		<!-- Raw tab: plain key/value dump of event + LLM fields. -->
 		<div x-show="tab === 'raw'">
