@@ -38,6 +38,7 @@ type Request struct {
 	Model    string           `json:"model"`
 	Messages []Message        `json:"messages"`
 	Tools    []ToolDefinition `json:"tools,omitempty"`
+	Stream   bool             `json:"stream,omitempty"` // set by CompleteStream; false omitted so Complete is unaffected
 }
 
 // Response is received from the LLM provider.

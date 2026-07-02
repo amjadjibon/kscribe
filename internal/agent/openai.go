@@ -1,14 +1,26 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/bytedance/sonic"
 )
+
+// streamChunk is the minimal SSE payload shape for streaming chat completions.
+// CON-003: sonic only.
+type streamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+	} `json:"choices"`
+}
 
 // OpenAIClient is an OpenAI-compatible chat-completions provider.
 // CON-003: sonic for all JSON encoding/decoding.
@@ -75,4 +87,74 @@ func (c *OpenAIClient) Complete(ctx context.Context, req Request) (Response, err
 		return Response{}, fmt.Errorf("unmarshal response: %w", err)
 	}
 	return out, nil
+}
+
+// CompleteStream sends a streaming chat-completions request and calls onDelta
+// for each content chunk. The returned Response.Choices[0].Message.Content
+// holds the fully-accumulated text. Implements StreamingProvider.
+// CON-003: sonic only, no encoding/json.
+func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta func(string) error) (Response, error) {
+	req.Model = c.Model
+	req.Stream = true
+	body, err := sonic.Marshal(req)
+	if err != nil {
+		return Response{}, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BaseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return Response{}, fmt.Errorf("build http request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return Response{}, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return Response{}, fmt.Errorf("provider error %d: %s", resp.StatusCode, b)
+	}
+
+	var accumulated strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := line[len("data: "):]
+		if payload == "[DONE]" {
+			break
+		}
+		var chunk streamChunk
+		if err := sonic.UnmarshalString(payload, &chunk); err != nil {
+			return Response{}, fmt.Errorf("unmarshal chunk: %w", err)
+		}
+		if len(chunk.Choices) > 0 {
+			delta := chunk.Choices[0].Delta.Content
+			if delta != "" {
+				accumulated.WriteString(delta)
+				if err := onDelta(delta); err != nil {
+					return Response{}, err
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return Response{}, fmt.Errorf("read stream: %w", err)
+	}
+
+	return Response{
+		Choices: []Choice{{
+			Message:      Message{Role: "assistant", Content: accumulated.String()},
+			FinishReason: "stop",
+		}},
+	}, nil
 }
