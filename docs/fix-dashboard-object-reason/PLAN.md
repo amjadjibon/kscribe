@@ -4,13 +4,13 @@ version: 1.0
 date_created: 2026-07-03
 last_updated: 2026-07-03
 owner: Codex
-status: 'Planned'
+status: 'Completed'
 tags: [bug]
 ---
 
 # Fix Dashboard Object And Reason Display
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 The dashboard should show the Kubernetes involved object and event reason anywhere an incident appears. This plan adds regression coverage for the real reconcile/store/web path, then fixes the smallest broken link in that path.
 
@@ -29,10 +29,11 @@ The dashboard should show the Kubernetes involved object and event reason anywhe
 
 **Goal**: Add focused regression coverage and fix the dashboard metadata propagation/rendering path in one narrow change.
 
-- [ ] TASK-001: Add an integration assertion in `internal/controller/reconciler_store_integration_test.go` that a reconciled incident returned by `ListIncidents` includes `InvolvedObjectKind`, `InvolvedObjectName`, `InvolvedObjectNamespace`, and `Reason`.
-- [ ] TASK-002: Add web-render assertions in `internal/web/server_test.go` proving the incident list and detail page include `Pod/my-pod` and `BackOff` for seeded incident metadata.
-- [ ] TASK-003: Fix the minimal code path in `internal/controller/kscribediagnosis_controller.go`, `internal/store/sqlite.go`, or `internal/web/templates/incidents.templ` that prevents present object/reason metadata from appearing.
-- [ ] TASK-004: Regenerate `internal/web/templates/incidents_templ.go` with `templ generate` if the templ source changes.
+- [x] TASK-001: Add an integration assertion in `internal/controller/reconciler_store_integration_test.go` that a reconciled incident returned by `ListIncidents` includes `InvolvedObjectKind`, `InvolvedObjectName`, `InvolvedObjectNamespace`, and `Reason`.
+- [x] TASK-002: Add web-render assertions in `internal/web/server_test.go` proving the incident list and detail page include `Pod/my-pod` and `BackOff` for seeded incident metadata.
+- [x] TASK-003: Fix the minimal code path in `internal/controller/kscribediagnosis_controller.go`, `internal/store/sqlite.go`, or `internal/web/templates/incidents.templ` that prevents present object/reason metadata from appearing.
+- [x] TASK-004: Regenerate `internal/web/templates/incidents_templ.go` with `templ generate` if the templ source changes.
+  > Not needed: the fix did not change `internal/web/templates/incidents.templ`.
 
 **Completion criteria**: `go test ./internal/controller ./internal/store ./internal/web`
 
@@ -71,7 +72,7 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 ## 3. Testing
 
-- [ ] TEST-001: `go test ./internal/controller ./internal/store ./internal/web`
+- [x] TEST-001: `go test ./internal/controller ./internal/store ./internal/web`
 
 ## 4. Risks & Assumptions
 

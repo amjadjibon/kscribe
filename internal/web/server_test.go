@@ -217,6 +217,15 @@ func TestList(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("want text/html, got %q", ct)
 	}
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+	if !strings.Contains(body, "Pod/my-pod (default)") {
+		t.Fatalf("want object label in incident list, body missing Pod/my-pod (default)")
+	}
+	if !strings.Contains(body, "BackOff") {
+		t.Fatalf("want event reason in incident list, body missing BackOff")
+	}
 }
 
 func TestListUsesFallbackForMissingObjectAndReason(t *testing.T) {
@@ -285,6 +294,14 @@ func TestDetail(t *testing.T) {
 			}
 			if !strings.Contains(body, tc.wantInBody) {
 				t.Errorf("want %q in body", tc.wantInBody)
+			}
+			if tc.path == "/incidents/default/done-incident" {
+				if !strings.Contains(body, "Pod/my-pod (default)") {
+					t.Fatalf("want object label in detail page, body missing Pod/my-pod (default)")
+				}
+				if !strings.Contains(body, "BackOff") {
+					t.Fatalf("want event reason in detail page, body missing BackOff")
+				}
 			}
 		})
 	}

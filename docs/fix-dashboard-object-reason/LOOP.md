@@ -23,7 +23,7 @@ last_review_base: ''
 
 | Phase | Branch | PR URL | Base | Status |
 | ----- | ------ | ------ | ---- | ------ |
-| phase-1 | fix-dashboard-object-reason/phase-1 | — | main | pending |
+| phase-1 | fix-dashboard-object-reason-phase-1 | — | main | pending |
 
 ## Active Worktrees
 
@@ -38,3 +38,7 @@ last_review_base: ''
 - [ ] qa
 - [ ] code-review
 - [ ] decide
+
+Note: using hyphenated phase branch name because Git cannot create
+`fix-dashboard-object-reason/phase-1` while the parent feature branch
+`fix-dashboard-object-reason` exists.
