@@ -48,3 +48,13 @@ upgrade or delete CRDs — to update them, apply `config/crd/bases/*.yaml` (or
 
 Enriched (redacted) cluster context is sent to the configured LLM provider.
 Redaction is always enforced (SEC-001).
+
+LLM calls include guardrail system prompts that scope output to Kubernetes
+incident diagnosis and remediation, and instruct the model to ignore unrelated
+instructions embedded in logs, events, tool output, RCA text, or chat history.
+Output is token-capped by request type: 1024 default, 900 per diagnosis turn,
+500 for JSON repair, and 700 per incident-chat turn.
+
+The dashboard and `KscribeDiagnosis` status record audit metadata for each run:
+LLM provider, model, tokens used, start/completion timestamps, and persistence
+state.

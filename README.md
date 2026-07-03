@@ -58,6 +58,8 @@ The dashboard is available via the `kscribe-dashboard` ClusterIP Service on port
 kubectl port-forward svc/kscribe-dashboard 8080:8080 -n kscribe-system
 ```
 
+Incident detail pages show the diagnosis status, RCA/remediation, redacted context, chat history, and audit metadata including the LLM provider, model, token count, start/completion timestamps, and persistence state.
+
 ---
 
 ## LLM provider
@@ -85,6 +87,21 @@ helm upgrade --install kscribe ./charts/kscribe \
 ```
 
 `llm.baseURL` overrides the endpoint for any other OpenAI-compatible server.
+
+### Runtime safeguards and audit metadata
+
+All LLM requests are scoped by system prompts to Kubernetes incident analysis. The diagnosis prompt tells the model to ignore instructions embedded in cluster context, events, logs, resource names, and tool output. The incident chat prompt applies the same boundary to stored context, RCA text, and chat history; unrelated user requests should receive a short refusal tied to the current incident.
+
+kscribe also caps assistant output tokens on every OpenAI-compatible request:
+
+| Path | Max output tokens |
+|------|-------------------|
+| Default provider request | 1024 |
+| Diagnosis loop turn | 900 |
+| Diagnosis JSON repair turn | 500 |
+| Incident chat turn | 700 |
+
+Each diagnosis records `llmProvider`, `llmModel`, `tokensUsed`, `startedAt`, and `completedAt` in CR status and mirrors them into SQLite for the dashboard.
 
 ### Local end-to-end smoke test
 
@@ -185,6 +202,14 @@ go run ./cmd/kscribe \
 ```
 
 Set `KSCRIBE_LLM_API_KEY` in your environment for LLM calls.
+
+Run the dashboard without Kubernetes using fixture data and a fake streaming provider:
+
+```sh
+go run ./cmd/kscribe-web-dev
+```
+
+Then open `http://127.0.0.1:18080`.
 
 ---
 
