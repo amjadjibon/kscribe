@@ -44,6 +44,8 @@ func TestReconcile_WithRealStore(t *testing.T) {
 		Scheme:        scheme,
 		Store:         st, // real store
 		AgentProvider: goodProvider(),
+		LLMProvider:   "openai",
+		LLMModel:      "gpt-4o-mini",
 		MaxIter:       3,
 	}
 
@@ -84,6 +86,15 @@ func TestReconcile_WithRealStore(t *testing.T) {
 	}
 	if inc.TokensUsed != 42 {
 		t.Errorf("incident TokensUsed = %d, want 42", inc.TokensUsed)
+	}
+	if inc.LLMProvider != "openai" {
+		t.Errorf("incident LLMProvider = %q, want openai", inc.LLMProvider)
+	}
+	if inc.LLMModel != "gpt-4o-mini" {
+		t.Errorf("incident LLMModel = %q, want gpt-4o-mini", inc.LLMModel)
+	}
+	if inc.CreatedAt.IsZero() {
+		t.Error("incident CreatedAt must be set")
 	}
 	if inc.InvolvedObjectKind != "Pod" {
 		t.Errorf("incident InvolvedObjectKind = %q, want Pod", inc.InvolvedObjectKind)

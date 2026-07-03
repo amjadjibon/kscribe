@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -168,6 +168,8 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				Store:         st,
 				AgentProvider: provider,
 				Publisher:     &brokerPublisher{b: broker},
+				LLMProvider:   cfg.LLMProvider,
+				LLMModel:      cfg.LLMModel,
 				MaxIter:       cfg.MaxIterations,
 				Concurrency:   cfg.DiagnosisConcurrency,
 				Tools:         agent.KubeTools(),

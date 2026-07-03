@@ -75,6 +75,9 @@ func TestOpenAIClient_Complete_SDKRoundTrip(t *testing.T) {
 	if reqBody["model"] != "gpt-4o-mini" {
 		t.Errorf("model = %v, want gpt-4o-mini", reqBody["model"])
 	}
+	if reqBody["max_tokens"] != float64(DefaultMaxTokens) {
+		t.Errorf("max_tokens = %v, want %d", reqBody["max_tokens"], DefaultMaxTokens)
+	}
 	msgs, ok := reqBody["messages"].([]any)
 	if !ok || len(msgs) != 4 {
 		t.Fatalf("messages = %v, want 4", reqBody["messages"])

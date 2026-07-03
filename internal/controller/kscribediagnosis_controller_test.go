@@ -106,6 +106,8 @@ func reconcilerFor(st controller.DiagnosisStore, prov agent.Provider) *controlle
 		Scheme:        testScheme(),
 		Store:         st,
 		AgentProvider: prov,
+		LLMProvider:   "openai",
+		LLMModel:      "gpt-4o-mini",
 		MaxIter:       3,
 	}
 }
@@ -156,11 +158,21 @@ func TestReconcile_SuccessWritesSQLiteBeforeDone(t *testing.T) {
 	if got.Status.TokensUsed != 42 {
 		t.Fatalf("want TokensUsed=42, got %d", got.Status.TokensUsed)
 	}
+	if got.Status.LLMProvider != "openai" {
+		t.Fatalf("want LLMProvider=openai, got %q", got.Status.LLMProvider)
+	}
+	if got.Status.LLMModel != "gpt-4o-mini" {
+		t.Fatalf("want LLMModel=gpt-4o-mini, got %q", got.Status.LLMModel)
+	}
 	if !got.Status.Persisted {
 		t.Fatal("want Persisted=true")
 	}
 	if got.Status.Summary == "" {
 		t.Fatal("want non-empty Summary")
+	}
+	last := st.incidents[len(st.incidents)-1]
+	if last.LLMProvider != "openai" || last.LLMModel != "gpt-4o-mini" {
+		t.Fatalf("store LLM fields = %q/%q, want openai/gpt-4o-mini", last.LLMProvider, last.LLMModel)
 	}
 }
 

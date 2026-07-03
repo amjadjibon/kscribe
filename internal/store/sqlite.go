@@ -146,8 +146,8 @@ INSERT INTO incidents (
     reason, message, phase,
     started_at, completed_at,
     llm_provider, llm_model, tokens_used, prompt_redacted, persisted,
-    updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(namespace, name) DO UPDATE SET
     event_uid                 = COALESCE(NULLIF(excluded.event_uid, ''), incidents.event_uid),
     involved_object_kind      = COALESCE(NULLIF(excluded.involved_object_kind, ''), incidents.involved_object_kind),
@@ -165,14 +165,22 @@ ON CONFLICT(namespace, name) DO UPDATE SET
     persisted                 = excluded.persisted,
     updated_at                = excluded.updated_at`
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC()
+	createdAt := now
+	if !inc.CreatedAt.IsZero() {
+		createdAt = inc.CreatedAt.UTC()
+	}
+	updatedAt := now
+	if !inc.UpdatedAt.IsZero() {
+		updatedAt = inc.UpdatedAt.UTC()
+	}
 	_, err := s.db.ExecContext(ctx, q,
 		inc.Namespace, inc.Name, inc.EventUID,
 		inc.InvolvedObjectKind, inc.InvolvedObjectName, inc.InvolvedObjectNamespace,
 		inc.Reason, inc.Message, inc.Phase,
 		fmtTimePtr(inc.StartedAt), fmtTimePtr(inc.CompletedAt),
 		inc.LLMProvider, inc.LLMModel, inc.TokensUsed, inc.PromptRedacted, inc.Persisted,
-		now,
+		createdAt.Format(time.RFC3339Nano), updatedAt.Format(time.RFC3339Nano),
 	)
 	return err
 }

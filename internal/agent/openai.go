@@ -36,6 +36,8 @@ type OpenAIClient struct {
 	HTTPClient *http.Client
 }
 
+const DefaultMaxTokens = 1024
+
 // NewOpenAIClient constructs an OpenAIClient. baseURL is the API base including
 // the version segment (e.g. https://api.openai.com/v1, or Gemini's
 // https://generativelanguage.googleapis.com/v1beta/openai); "/chat/completions"
@@ -73,6 +75,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req Request) (Response, err
 		Model:    shared.ChatModel(c.Model),
 		Messages: toSDKMessages(req.Messages),
 	}
+	params.MaxTokens = param.NewOpt(int64(effectiveMaxTokens(req)))
 	if len(req.Tools) > 0 {
 		params.Tools = toSDKTools(req.Tools)
 	}
@@ -177,6 +180,7 @@ func fromSDKResponse(resp *openai.ChatCompletion) Response {
 func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta func(string) error) (Response, error) {
 	req.Model = c.Model
 	req.Stream = true
+	req.MaxTokens = effectiveMaxTokens(req)
 	body, err := sonic.Marshal(req)
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
@@ -238,4 +242,11 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta 
 			FinishReason: "stop",
 		}},
 	}, nil
+}
+
+func effectiveMaxTokens(req Request) int {
+	if req.MaxTokens > 0 {
+		return req.MaxTokens
+	}
+	return DefaultMaxTokens
 }

@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/bytedance/sonic"
 )
 
 // sseServer returns an httptest.Server that writes canned SSE lines then [DONE].
@@ -43,6 +46,29 @@ func TestCompleteStream_ParsesDeltas(t *testing.T) {
 	}
 	if resp.Choices[0].Message.Content != "Hello" {
 		t.Errorf("content = %q, want Hello", resp.Choices[0].Message.Content)
+	}
+}
+
+func TestCompleteStream_SendsTokenLimit(t *testing.T) {
+	var reqBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = sonic.Unmarshal(b, &reqBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer srv.Close()
+
+	c := NewOpenAIClient(srv.URL, "", "m")
+	_, err := c.CompleteStream(context.Background(), Request{MaxTokens: 123}, func(string) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream: %v", err)
+	}
+	if reqBody["max_tokens"] != float64(123) {
+		t.Errorf("max_tokens = %v, want 123", reqBody["max_tokens"])
 	}
 }
 

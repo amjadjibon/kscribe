@@ -178,6 +178,9 @@ func TestUpsertIncidentPreservesMetadataOnPhaseOnlyUpdate(t *testing.T) {
 	if got.InvolvedObjectKind != "Pod" || got.InvolvedObjectName != "api-7d9" || got.Reason != "BackOff" || got.Message == "" {
 		t.Fatalf("metadata not preserved: %+v", got.Incident)
 	}
+	if got.CreatedAt.IsZero() {
+		t.Fatal("CreatedAt must be set")
+	}
 }
 
 // TestInsertDiagnosisAndReadBack writes a final RCA and verifies it round-trips correctly.

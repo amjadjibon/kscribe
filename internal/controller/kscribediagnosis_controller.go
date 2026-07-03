@@ -44,6 +44,8 @@ type KscribeDiagnosisReconciler struct {
 	Store         DiagnosisStore
 	AgentProvider agent.Provider
 	Publisher     Publisher // may be nil; no-op when absent
+	LLMProvider   string    // operator default; CR spec override wins
+	LLMModel      string    // operator default; CR spec override wins
 	MaxIter       int       // default max tool-call iterations; overridable via CR spec
 	Concurrency   int       // MaxConcurrentReconciles; 0 defaults to 1
 	Tools         []agent.ToolDefinition
@@ -89,6 +91,20 @@ func metaTimePtr(t *metav1.Time) *time.Time {
 	return &out
 }
 
+func (r *KscribeDiagnosisReconciler) effectiveLLMProvider(kd *kscribev1alpha1.KscribeDiagnosis) string {
+	if kd.Spec.LLMProvider != "" {
+		return kd.Spec.LLMProvider
+	}
+	return r.LLMProvider
+}
+
+func (r *KscribeDiagnosisReconciler) effectiveLLMModel(kd *kscribev1alpha1.KscribeDiagnosis) string {
+	if kd.Spec.LLMModel != "" {
+		return kd.Spec.LLMModel
+	}
+	return r.LLMModel
+}
+
 // Reconcile drives a KscribeDiagnosis CR from Pending → Diagnosing → Done/Partial/Failed.
 // Write ordering (ADR-003): SQLite upsert(Diagnosing) → run LLM → SQLite InsertDiagnosis → CR Done/Partial.
 func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -126,6 +142,8 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	logger.Info("starting diagnosis", "name", req.Name, "namespace", req.Namespace, "reason", kd.Spec.Reason)
 
 	now := time.Now().UTC()
+	llmProvider := r.effectiveLLMProvider(&kd)
+	llmModel := r.effectiveLLMModel(&kd)
 
 	// ADR-003 step 1: mirror to SQLite as Diagnosing before touching CR.
 	if err := r.Store.UpsertIncident(ctx, store.Incident{
@@ -139,6 +157,8 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Message:                 kd.Spec.Message,
 		Phase:                   string(kscribev1alpha1.DiagnosisPhaseDiagnosing),
 		StartedAt:               &now,
+		LLMProvider:             llmProvider,
+		LLMModel:                llmModel,
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("upsert incident (diagnosing): %w", err)
 	}
@@ -147,6 +167,8 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err := r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
 		o.Status.Phase = kscribev1alpha1.DiagnosisPhaseDiagnosing
 		o.Status.StartedAt = &metav1.Time{Time: now}
+		o.Status.LLMProvider = llmProvider
+		o.Status.LLMModel = llmModel
 		o.Status.ObservedGeneration = o.Generation
 		kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
 			Type:               kscribev1alpha1.ConditionDiagnosing,
@@ -227,6 +249,8 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			Phase:                   string(kscribev1alpha1.DiagnosisPhaseFailed),
 			StartedAt:               &now,
 			CompletedAt:             &completedAt,
+			LLMProvider:             llmProvider,
+			LLMModel:                llmModel,
 			TokensUsed:              outcome.TokensUsed,
 		})
 		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
@@ -235,6 +259,8 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
 			o.Status.Phase = kscribev1alpha1.DiagnosisPhaseFailed
 			o.Status.CompletedAt = &metav1.Time{Time: completedAt}
+			o.Status.LLMProvider = llmProvider
+			o.Status.LLMModel = llmModel
 			o.Status.TokensUsed = outcome.TokensUsed
 			o.Status.ObservedGeneration = o.Generation
 			kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
@@ -299,6 +325,8 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Phase:                   string(outcome.Phase),
 		StartedAt:               &now,
 		CompletedAt:             &completedAt,
+		LLMProvider:             llmProvider,
+		LLMModel:                llmModel,
 		TokensUsed:              outcome.TokensUsed,
 		Persisted:               true,
 	})
@@ -307,6 +335,8 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
 		o.Status.Phase = outcome.Phase
 		o.Status.CompletedAt = &metav1.Time{Time: completedAt}
+		o.Status.LLMProvider = llmProvider
+		o.Status.LLMModel = llmModel
 		o.Status.TokensUsed = outcome.TokensUsed
 		o.Status.Persisted = true
 		o.Status.ObservedGeneration = o.Generation
