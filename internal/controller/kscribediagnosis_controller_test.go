@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -202,6 +203,32 @@ func TestReconcile_SQLiteFailureKeepsDiagnosing(t *testing.T) {
 		if c.Type == kscribev1alpha1.ConditionPersisted && c.Status == metav1.ConditionTrue {
 			t.Fatal("Persisted condition must not be True after SQLite failure")
 		}
+	}
+}
+
+func TestReconcile_FreshDiagnosingDoesNotDuplicateDiagnosis(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-inflight", "default")
+	kd.Status.Phase = kscribev1alpha1.DiagnosisPhaseDiagnosing
+	kd.Status.StartedAt = &metav1.Time{Time: time.Now().UTC()}
+	kd.Status.Persisted = false
+	fc := buildClient(scheme, kd).Build()
+
+	st := &fakeStore{}
+	r := reconcilerFor(st, goodProvider())
+	r.Client = fc
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-inflight", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st.insertCalled != 0 {
+		t.Fatalf("fresh Diagnosing reconcile must not insert duplicate diagnosis, got %d inserts", st.insertCalled)
+	}
+	if st.upsertCalled != 0 {
+		t.Fatalf("fresh Diagnosing reconcile must not rewrite incident, got %d upserts", st.upsertCalled)
 	}
 }
 

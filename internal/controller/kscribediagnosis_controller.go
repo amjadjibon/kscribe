@@ -51,6 +51,8 @@ type KscribeDiagnosisReconciler struct {
 	KubeClient    kubernetes.Interface // nil → falls back to minimal spec-only snapshot
 }
 
+const diagnosingRecoveryAfter = 10 * time.Minute
+
 // publish emits an SSE fragment if a Publisher is wired; no-op otherwise.
 func (r *KscribeDiagnosisReconciler) publish(id, html string) {
 	if r.Publisher != nil {
@@ -97,7 +99,10 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Proceed for Pending/unset, or Diagnosing when not yet persisted (ADR-003 crash recovery).
+	// Proceed for Pending/unset, for a recorded storage-error retry, or for stale
+	// Diagnosing state after a process crash. A fresh Diagnosing status usually
+	// comes from our own status update while the original reconcile is still
+	// running; rerunning immediately would duplicate the RCA row.
 	switch kd.Status.Phase {
 	case "", kscribev1alpha1.DiagnosisPhasePending:
 	// proceed
@@ -108,7 +113,9 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			}
 			return ctrl.Result{}, nil
 		}
-		// Unpersisted Diagnosing: re-run diagnosis+persist so a transient store failure recovers.
+		if !hasStorageError(&kd) && !diagnosisIsStale(&kd, time.Now().UTC()) {
+			return ctrl.Result{}, nil
+		}
 	default:
 		if err := r.Store.UpsertIncident(ctx, incidentFromDiagnosis(&kd)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("upsert incident (terminal mirror): %w", err)
@@ -336,6 +343,24 @@ func (r *KscribeDiagnosisReconciler) patchStatus(ctx context.Context, key types.
 		mutate(&cur)
 		return r.Status().Update(ctx, &cur)
 	})
+}
+
+func hasStorageError(kd *kscribev1alpha1.KscribeDiagnosis) bool {
+	for _, c := range kd.Status.Conditions {
+		if c.Type == kscribev1alpha1.ConditionPersisted &&
+			c.Status == metav1.ConditionFalse &&
+			c.Reason == "StorageError" {
+			return true
+		}
+	}
+	return false
+}
+
+func diagnosisIsStale(kd *kscribev1alpha1.KscribeDiagnosis, now time.Time) bool {
+	if kd.Status.StartedAt == nil {
+		return true
+	}
+	return now.Sub(kd.Status.StartedAt.Time) >= diagnosingRecoveryAfter
 }
 
 // SetupWithManager registers the reconciler with the controller-manager.
