@@ -38,7 +38,7 @@ last_review_base: ''
 
 ### Iteration 1
 
-- [ ] implement-plan
+- [x] implement-plan
 - [ ] qa
 - [ ] code-review
 - [ ] decide
