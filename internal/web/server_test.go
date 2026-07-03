@@ -1207,6 +1207,12 @@ func TestChatDetailRender(t *testing.T) {
 	if !strings.Contains(body, `window.location.reload()`) {
 		t.Error("want successful chat post to reload persisted history")
 	}
+	if !strings.Contains(body, `:readonly="chatSending"`) {
+		t.Error("want chat input to stay serializable while sending")
+	}
+	if strings.Contains(body, `class="chat-input" autocomplete="off" :disabled="chatSending"`) {
+		t.Error("chat input must not be disabled before HTMX serializes the form")
+	}
 }
 
 // TestChatPost asserts POST /incidents/{ns}/{name}/chat returns 200 and persists. TASK-021.

@@ -905,7 +905,8 @@ a.stat-card:hover { box-shadow: var(--shadow-md); text-decoration: none; }
   outline: none;
 }
 
-.chat-input:disabled {
+.chat-input:disabled,
+.chat-input[readonly] {
   color: var(--c-text-muted);
 }
 

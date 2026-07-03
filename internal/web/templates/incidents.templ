@@ -332,7 +332,7 @@ templ ChatPanel(d *IncidentDetailView) {
 					placeholder="Ask about this incident..."
 					class="chat-input"
 					autocomplete="off"
-					:disabled="chatSending"
+					:readonly="chatSending"
 				/>
 				<button type="submit" class="chat-send" aria-label="Send message" title="Send message" :disabled="chatSending || chatDraft.trim() === ''">
 					<span x-show="!chatSending">↑</span>
