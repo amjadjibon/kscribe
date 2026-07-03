@@ -4,6 +4,26 @@ kscribe is a Kubernetes operator that automatically diagnoses events using an LL
 
 ---
 
+## How it works
+
+```mermaid
+flowchart LR
+    event["Kubernetes Warning Event<br/>BackOff / OOMKilling / FailedScheduling"] --> watcher["Event watcher"]
+    watcher --> policy["DiagnosisPolicy<br/>reason filter, model, max iterations"]
+    policy --> cr["KscribeDiagnosis CR<br/>Pending -> Diagnosing"]
+    cr --> enricher["Context enricher<br/>event, object, logs, related state"]
+    enricher --> redactor["Redactor<br/>tokens, passwords, keys"]
+    redactor --> agent["LLM diagnosis agent<br/>guardrails + tool loop + token caps"]
+    agent --> provider["OpenAI-compatible provider<br/>OpenAI / Gemini / Groq / local"]
+    provider --> agent
+    agent --> status["CR status<br/>RCA, tokens, provider/model"]
+    agent --> sqlite["SQLite history mirror<br/>incidents, diagnoses, chat"]
+    sqlite --> dashboard["Dashboard + incident chat<br/>templ / HTMX / SSE"]
+    status --> dashboard
+```
+
+---
+
 ## Limitations
 
 **CON-005 — core v1 Events only.** kscribe watches `core/v1 Event` objects (Warning type) exclusively. It does not watch custom events or metrics signals. Pod-log enrichment is available via the tool executor (future wire-in); the MVP uses spec fields from the triggered event.
