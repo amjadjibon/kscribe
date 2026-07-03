@@ -8,6 +8,8 @@ const (
 	GeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
 	// ZAIBaseURL is Z.AI (Zhipu GLM) OpenAI-compatible endpoint base.
 	ZAIBaseURL = "https://api.z.ai/api/paas/v4"
+	// GroqBaseURL is Groq's OpenAI-compatible endpoint base.
+	GroqBaseURL = "https://api.groq.com/openai/v1"
 )
 
 // ResolveBaseURL returns the effective API base for a provider. An explicit
@@ -23,6 +25,8 @@ func ResolveBaseURL(provider, baseURL string) string {
 		return GeminiBaseURL
 	case "zai", "z.ai", "zhipu", "glm":
 		return ZAIBaseURL
+	case "groq":
+		return GroqBaseURL
 	default:
 		return ""
 	}
