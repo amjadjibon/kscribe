@@ -2,11 +2,11 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
-	"github.com/bytedance/sonic"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,7 +49,7 @@ func (e *KubeToolExecutor) getPodLogs(ctx context.Context, argsJSON string) (str
 		Container string `json:"container"`
 		Tail      int64  `json:"tail"`
 	}
-	if err := sonic.UnmarshalString(argsJSON, &args); err != nil {
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("parse args: %w", err)
 	}
 	tail := args.Tail
@@ -81,7 +81,7 @@ func (e *KubeToolExecutor) getEvents(ctx context.Context, argsJSON string) (stri
 		Namespace  string `json:"namespace"`
 		ObjectName string `json:"object_name"`
 	}
-	if err := sonic.UnmarshalString(argsJSON, &args); err != nil {
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("parse args: %w", err)
 	}
 	var list corev1.EventList
@@ -109,7 +109,7 @@ func (e *KubeToolExecutor) getNode(ctx context.Context, argsJSON string) (string
 	var args struct {
 		NodeName string `json:"node_name"`
 	}
-	if err := sonic.UnmarshalString(argsJSON, &args); err != nil {
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("parse args: %w", err)
 	}
 	var node corev1.Node

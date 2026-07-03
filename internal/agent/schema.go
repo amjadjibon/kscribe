@@ -1,7 +1,7 @@
 package agent
 
 // RCAResult is the structured root-cause analysis output produced by the LLM.
-// CON-003: sonic tags — no encoding/json.
+// JSON via stdlib encoding/json.
 type RCAResult struct {
 	Summary             string   `json:"summary"`
 	RootCause           string   `json:"rootCause"`

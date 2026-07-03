@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,8 +10,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/bytedance/sonic"
 )
 
 // sseServer returns an httptest.Server that writes canned SSE lines then [DONE].
@@ -53,7 +52,7 @@ func TestCompleteStream_SendsTokenLimit(t *testing.T) {
 	var reqBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		_ = sonic.Unmarshal(b, &reqBody)
+		_ = json.Unmarshal(b, &reqBody)
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
 		fmt.Fprintln(w, "data: [DONE]")

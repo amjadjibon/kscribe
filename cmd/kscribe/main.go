@@ -197,7 +197,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 			// SSE broker shared between reconciler and web server.
 			broker := web.NewBroker()
 
-			// OpenAI-compatible provider built from config (CON-003: sonic used inside package).
+			// OpenAI-compatible provider built from config.
 			// provider=google/gemini auto-targets Gemini's OpenAI-compatible endpoint.
 			baseURL := agent.ResolveBaseURL(cfg.LLMProvider, cfg.LLMBaseURL)
 			provider := agent.NewOpenAIClient(baseURL, cfg.LLMAPIKey, cfg.LLMModel)

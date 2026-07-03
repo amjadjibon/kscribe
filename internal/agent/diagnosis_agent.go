@@ -2,9 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-
-	"github.com/bytedance/sonic"
 
 	kscribev1alpha1 "github.com/amjadjibon/kscribe/api/v1alpha1"
 )
@@ -68,7 +67,7 @@ func (a *DiagnosisAgent) Run(ctx context.Context, snapshotJSON []byte) Outcome {
 	}
 
 	var totalTokens int64
-	trace := make([]TraceStep, 0) // non-nil so sonic.Marshal produces "[]" not "null"
+	trace := make([]TraceStep, 0) // non-nil so json.Marshal produces "[]" not "null"
 
 	for i := 0; i < maxIter; i++ {
 		resp, err := a.Provider.Complete(ctx, Request{Messages: messages, Tools: a.Tools, MaxTokens: DiagnosisMaxTokens})
@@ -191,10 +190,10 @@ func (a *DiagnosisAgent) callTool(ctx context.Context, tc ToolCall) string {
 	return result
 }
 
-// parseRCA unmarshals content as an RCAResult via sonic (CON-003).
+// parseRCA unmarshals content as an RCAResult.
 func parseRCA(content string) (*RCAResult, error) {
 	var rca RCAResult
-	if err := sonic.UnmarshalString(content, &rca); err != nil {
+	if err := json.Unmarshal([]byte(content), &rca); err != nil {
 		return nil, fmt.Errorf("unmarshal: %w", err)
 	}
 	if rca.Summary == "" || rca.RootCause == "" {

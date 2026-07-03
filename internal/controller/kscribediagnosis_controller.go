@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"strings"
@@ -18,7 +19,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	kscribev1alpha1 "github.com/amjadjibon/kscribe/api/v1alpha1"
-	"github.com/bytedance/sonic"
 
 	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/enricher"
@@ -299,7 +299,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// ADR-003 step 3: write final RCA to SQLite BEFORE updating CR phase.
-	traceJSON, _ := sonic.Marshal(outcome.Trace)
+	traceJSON, _ := json.Marshal(outcome.Trace)
 	if len(traceJSON) == 0 {
 		traceJSON = []byte("[]")
 	}
