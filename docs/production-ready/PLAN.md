@@ -1,6 +1,6 @@
 ---
 goal: Make kscribe production ready — retention, metrics, auth, cost caps
-version: 1.0
+version: 1.1
 date_created: 2026-07-03
 last_updated: 2026-07-03
 owner: amjadjibon
@@ -20,8 +20,9 @@ kscribe works end to end but has four gaps that bite in a real cluster: unbounde
 - **REQ-002**: Prometheus metrics expose diagnosis counts (by outcome), LLM token usage, and LLM request latency.
 - **REQ-003**: Dashboard routes (except `/healthz`) can require a static bearer token sourced from a Secret.
 - **REQ-004**: A global rate limit caps diagnoses started per hour; excess CRs wait (requeue), they are not dropped.
+- **REQ-005**: All JSON encoding/decoding uses stdlib `encoding/json`; `github.com/bytedance/sonic` is removed from `go.mod` along with its transitive dependencies.
 - **SEC-001**: Auth token never appears in logs or CR status; comparison uses `crypto/subtle.ConstantTimeCompare`.
-- **CON-001**: CON-003 house rule — all JSON via sonic, no `encoding/json`.
+- **CON-001**: The old "all JSON via sonic" house rule (CON-003 in code comments) is retired by Phase 5. Phases 1–4 need no JSON work; if any arises, use `encoding/json` and don't add new sonic call sites.
 - **CON-002**: No new dependencies beyond what controller-runtime already vendors (prometheus client is already transitive via controller-runtime metrics).
 - **CON-003**: Every new knob defaults to current behaviour where safe (auth off by default; retention on with 30d default since unbounded growth is the outage).
 - **CON-004**: `deploy/kscribe.yaml` is generated — edit only `charts/kscribe`, then run `scripts/build-manifest.sh`.
@@ -63,8 +64,7 @@ Tasks:
   last_seen < olderThan plus their diagnoses and chat rows. Check the
   schema in internal/store/migrations/*.sql first; if child tables lack
   ON DELETE CASCADE, either delete children explicitly in one transaction
-  or add a new numbered migration. All JSON via sonic (house rule CON-003),
-  though Prune likely needs none.
+  or add a new numbered migration.
 - TASK-003: In cmd/kscribe/main.go, add a pruner via
   mgr.Add(ctrlmgr.RunnableFunc(...)): hourly ticker; skip entirely when
   RetentionPeriod == 0; call st.Prune and also list+delete KscribeDiagnosis
@@ -78,7 +78,7 @@ Tasks:
 
 Key files:
 - internal/config/config.go — env-tagged Config struct
-- internal/store/sqlite.go — Store methods; sqlite via modernc or mattn (check imports)
+- internal/store/sqlite.go — Store methods; sqlite via modernc.org/sqlite
 - internal/store/migrations/ — numbered .sql migrations, embedded
 - cmd/kscribe/main.go — manager wiring, existing RunnableFunc example for the web server
 - charts/kscribe/values.yaml, charts/kscribe/templates/deployment.yaml
@@ -296,6 +296,68 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 ---
 
+### Phase 5: Replace sonic with stdlib encoding/json
+
+**Goal**: Drop `github.com/bytedance/sonic` (and the ~7 transitive modules it pulls in: sonic/loader, bytedance/gopkg, cloudwego/base64x, twitchyliquid64/golang-asm, klauspost/cpuid, golang.org/x/arch) in favour of stdlib `encoding/json`. Fewer deps, no cgo/asm surface, one less supply-chain worry. Last because it's mechanical and touches files the earlier phases also edit — doing it here avoids rebase churn.
+
+**Depends on**: Phase 4 complete
+
+- [ ] TASK-017: Replace all sonic imports/calls with `encoding/json` in: `internal/store/sqlite.go`, `internal/enricher/payload.go`, `internal/agent/openai.go`, `internal/agent/schema.go`, `internal/agent/diagnosis_agent.go`, `internal/web/templates/viewmodel.go`, `internal/controller/tool_executor.go`, `internal/controller/kscribediagnosis_controller.go`, `cmd/kscribe/main.go` — `sonic.Marshal`→`json.Marshal`, `sonic.Unmarshal`→`json.Unmarshal`, decoder/encoder variants to `json.NewDecoder`/`json.NewEncoder`. Struct tags are already `json:"..."` so no tag changes.
+- [ ] TASK-018: Update the corresponding `_test.go` files (`internal/enricher/enricher_test.go`, `internal/agent/{openai,streaming}_test.go`, `internal/web/server_test.go`) the same way.
+- [ ] TASK-019: Delete or rewrite all `CON-003` code comments that say "sonic, not encoding/json" — they now state the opposite of reality.
+- [ ] TASK-020: `go mod tidy` and verify sonic and its transitive-only deps are gone from `go.mod`/`go.sum`.
+
+**Completion criteria**: `grep -rn "sonic" --include='*.go' cmd internal` returns nothing; `grep sonic go.mod` returns nothing; `go build ./... && go test ./...` passes.
+
+**git commit**: `git add -u && git commit -m "refactor: replace sonic with stdlib encoding/json"`
+
+**Agent Prompt**:
+```
+You are a sub-agent implementing Phase 5 of production-ready for kscribe,
+a Go Kubernetes operator. The codebase currently uses
+github.com/bytedance/sonic for all JSON (an old house rule tagged CON-003
+in comments). Replace it with stdlib encoding/json and remove the
+dependency.
+
+Branch: production-ready/phase-5  |  Base: production-ready/phase-4
+
+Tasks:
+- TASK-017: In internal/store/sqlite.go, internal/enricher/payload.go,
+  internal/agent/openai.go, internal/agent/schema.go,
+  internal/agent/diagnosis_agent.go, internal/web/templates/viewmodel.go,
+  internal/controller/tool_executor.go,
+  internal/controller/kscribediagnosis_controller.go, cmd/kscribe/main.go:
+  swap sonic imports for encoding/json. sonic.Marshal→json.Marshal,
+  sonic.Unmarshal→json.Unmarshal; any sonic streaming decoder/encoder →
+  json.NewDecoder/json.NewEncoder. Watch internal/agent/openai.go: it
+  parses SSE stream chunks and deliberately skips malformed chunks —
+  preserve that behaviour. Struct tags are already json:"..." — do not
+  touch them.
+- TASK-018: Update the test files that import sonic the same way:
+  internal/enricher/enricher_test.go, internal/agent/openai_test.go,
+  internal/agent/streaming_test.go, internal/web/server_test.go.
+- TASK-019: Remove or rewrite every code comment referencing CON-003 /
+  "sonic, not encoding/json" so comments match the new reality. Also fix
+  the doc mention in internal/web/templates/viewmodel.go and the
+  "(CON-003: sonic used inside package)" comment in cmd/kscribe/main.go.
+- TASK-020: Run go mod tidy; confirm bytedance/sonic, sonic/loader,
+  bytedance/gopkg, cloudwego/base64x, twitchyliquid64/golang-asm,
+  klauspost/cpuid, and golang.org/x/arch are gone from go.mod (some may
+  remain if another module needs them — that's fine, only sonic itself
+  must be a direct removal).
+
+Completion criteria: grep -rn "sonic" --include='*.go' cmd internal
+returns nothing; grep sonic go.mod returns nothing;
+go build ./... && go test ./... passes.
+
+When done: git add -u && git commit -m "refactor: replace sonic with stdlib encoding/json"
+— no Co-authored-by.
+Write a one-paragraph summary of changes and commit SHA.
+Do NOT push, open PRs, or modify PLAN.md.
+```
+
+---
+
 ## 3. Testing
 
 - [ ] TEST-001: `internal/store/sqlite_test.go` — `TestPrune`: old incident + diagnoses + chat deleted, recent incident untouched, returns deleted count.
@@ -303,6 +365,7 @@ Do NOT push, open PRs, or modify PLAN.md.
 - [ ] TEST-003: `internal/controller/ratelimit_test.go` — window semantics incl. recovery after expiry.
 - [ ] TEST-004: `internal/controller/kscribediagnosis_controller_test.go` — throttled CR stays Pending, provider not invoked.
 - [ ] TEST-005: Manual/e2e — `scripts/local-test.sh` against kind: trigger a BackOff, confirm metrics at `:8081/metrics`, dashboard 401 without token, and pruning log line after shrinking `KSCRIBE_RETENTION_PERIOD`.
+- [ ] TEST-006: Post-Phase-5 — full `go test ./...` green with zero sonic references (`grep -rn sonic cmd internal go.mod` empty); existing JSON round-trip tests (enricher, agent, viewmodel) pass unchanged, proving behavioural equivalence.
 
 ## 4. Risks & Assumptions
 
@@ -313,3 +376,5 @@ Do NOT push, open PRs, or modify PLAN.md.
 - **ASSUMPTION-002**: `last_seen` (or equivalent timestamp column) exists on incidents for retention cutoff; if it's named differently the Phase 1 agent adapts to the actual schema in `migrations/0001_init.sql`.
 - **ASSUMPTION-003**: Single replica (matches existing CON-006 comments), so an in-process rate limiter and per-replica pruner are sufficient.
 - **ASSUMPTION-004**: Webhook/Slack notifications were deliberately excluded — they're a feature, not production readiness; add as a separate plan if wanted.
+- **RISK-004**: sonic and encoding/json differ on edge cases (HTML escaping defaults, number precision, map key ordering) — mitigation: existing round-trip tests must pass unchanged (TEST-006); the SSE chunk parser in `internal/agent/openai.go` keeps its skip-malformed-chunk behaviour.
+- **ASSUMPTION-005**: Only sonic is removable; the remaining direct deps (templ, chi, bluemonday, goldmark, openai-go, cobra, caarlos0/env, modernc.org/sqlite, k8s/controller-runtime) are all actively imported and stay.
