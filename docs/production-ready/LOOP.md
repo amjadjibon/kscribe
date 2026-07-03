@@ -8,7 +8,7 @@ max_phases: 5
 max_agents: 3
 current_iteration: 1
 status: running
-last_review_base: ''
+last_review_base: 'c6837a93b0ad67598a37ff474663ee8681a4ec5f'
 ---
 
 # Dev Loop: production-ready
@@ -39,6 +39,6 @@ last_review_base: ''
 ### Iteration 1
 
 - [x] implement-plan
-- [ ] qa
+- [x] qa
 - [ ] code-review
 - [ ] decide
