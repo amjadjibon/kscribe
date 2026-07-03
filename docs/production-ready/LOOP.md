@@ -23,11 +23,11 @@ last_review_base: ''
 
 | Phase | Branch | PR URL | Base | Status |
 |-------|--------|--------|------|--------|
-| 1 | production-ready/phase-1 | — | main | pending |
-| 2 | production-ready/phase-2 | — | production-ready/phase-1 | pending |
-| 3 | production-ready/phase-3 | — | production-ready/phase-2 | pending |
-| 4 | production-ready/phase-4 | — | production-ready/phase-3 | pending |
-| 5 | production-ready/phase-5 | — | production-ready/phase-4 | pending |
+| 1 | production-ready-phase-1 | — | main | pending |
+| 2 | production-ready-phase-2 | — | production-ready-phase-1 | pending |
+| 3 | production-ready-phase-3 | — | production-ready-phase-2 | pending |
+| 4 | production-ready-phase-4 | — | production-ready-phase-3 | pending |
+| 5 | production-ready-phase-5 | — | production-ready-phase-4 | pending |
 
 ## Active Worktrees
 
