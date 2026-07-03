@@ -34,6 +34,7 @@ func TestOpenAIClient_Path(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"choices":[]}`))
 	}))
 	defer srv.Close()
