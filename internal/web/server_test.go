@@ -1180,6 +1180,12 @@ func TestChatDetailRender(t *testing.T) {
 	if !strings.Contains(body, `chatOpen: true`) || !strings.Contains(body, `chat-rail-button`) {
 		t.Error("want collapsible chat rail controls in page")
 	}
+	if !strings.Contains(body, `chatDraft`) || !strings.Contains(body, `chatPending`) || !strings.Contains(body, `chatSending`) {
+		t.Error("want chat panel Alpine state for draft, pending, and sending")
+	}
+	if !strings.Contains(body, `class="chat-history"`) || !strings.Contains(body, `class="chat-pending"`) {
+		t.Error("want history and pending messages inside the transcript")
+	}
 	if strings.Contains(body, "tab='chat'") {
 		t.Error("chat should not be rendered as a tab")
 	}
@@ -1194,6 +1200,12 @@ func TestChatDetailRender(t *testing.T) {
 	// SSE connect attribute for chat stream.
 	if !strings.Contains(body, "/chat/stream") {
 		t.Error("want sse-connect to /chat/stream in page")
+	}
+	if !strings.Contains(body, `class="chat-bubble chat-bubble-assistant chat-streaming markdown"`) {
+		t.Error("want chat stream target to be the assistant bubble")
+	}
+	if !strings.Contains(body, `window.location.reload()`) {
+		t.Error("want successful chat post to reload persisted history")
 	}
 }
 

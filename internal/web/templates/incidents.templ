@@ -254,73 +254,96 @@ templ IncidentDetail(d *IncidentDetailView) {
 // ChatPanel renders history + live SSE streaming + input form.
 // SEC-001: assistant content goes through RenderMarkdown.
 templ ChatPanel(d *IncidentDetailView) {
-	<section class="chat-panel">
+	<section class="chat-panel" x-data="{ chatDraft: '', chatPending: [], chatSending: false }">
 		<button class="chat-rail-button" type="button" x-show="!chatOpen" @click="chatOpen = true" aria-label="Open chat">Chat</button>
 		<header class="chat-header" x-show="chatOpen">
 			<div>
-				<h3>Chat</h3>
-				<p>kscribe Copilot</p>
+				<h3>Incident Chat</h3>
+				<p>Context-aware RCA assistant</p>
 			</div>
 			<button class="chat-icon-button" type="button" @click="chatOpen = false" aria-label="Collapse chat" title="Collapse chat">&gt;</button>
 		</header>
-		<div class="chat-messages" id="chat-messages" x-show="chatOpen">
-			if len(d.ChatMessages) == 0 {
-				<div class="chat-empty">No messages yet. Ask a question below.</div>
-			} else {
-				for _, msg := range d.ChatMessages {
-					if msg.Role == "user" {
-						<div class="chat-message chat-message-user">
-							<div class="chat-message-label">You</div>
-							<div class="chat-bubble chat-bubble-user">{ msg.Content }</div>
-						</div>
-					} else {
-						<div class="chat-message chat-message-assistant">
-							<div class="chat-message-label">kscribe</div>
-							<div class="chat-bubble chat-bubble-assistant markdown">@RenderMarkdown(msg.Content)</div>
-						</div>
+		<div class="chat-messages" id="chat-messages" x-ref="chatTranscript" x-show="chatOpen" aria-live="polite">
+			<div class="chat-history">
+				if len(d.ChatMessages) == 0 {
+					<div class="chat-empty">
+						<strong>Ready for incident follow-up.</strong>
+						<span>Ask for blast radius, next command, or remediation checks.</span>
+					</div>
+				} else {
+					for _, msg := range d.ChatMessages {
+						if msg.Role == "user" {
+							<div class="chat-message chat-message-user">
+								<div class="chat-message-label">You</div>
+								<div class="chat-bubble chat-bubble-user">{ msg.Content }</div>
+							</div>
+						} else {
+							<div class="chat-message chat-message-assistant">
+								<div class="chat-message-label">kscribe</div>
+								<div class="chat-bubble chat-bubble-assistant markdown">@RenderMarkdown(msg.Content)</div>
+							</div>
+						}
 					}
 				}
-			}
-		</div>
-		<div
-			hx-ext="sse"
-			sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat/stream" }
-			sse-swap="message"
-			hx-swap="innerHTML"
-			id="chat-stream"
-			class="chat-bubble chat-bubble-assistant chat-streaming markdown"
-			x-show="chatOpen"
-		></div>
-		<div class="chat-input-area" x-data="{ draft: '', pending: [] }" x-show="chatOpen">
+			</div>
 			<div class="chat-pending">
-				<template x-for="(m, i) in pending" :key="i">
+				<template x-for="(m, i) in chatPending" :key="i">
 					<div class="chat-message chat-message-user">
 						<div class="chat-message-label">You</div>
 						<div class="chat-bubble chat-bubble-user" x-text="m"></div>
 					</div>
 				</template>
 			</div>
+			<div class="chat-message chat-message-assistant chat-streaming-message">
+				<div class="chat-message-label">kscribe</div>
+				<div
+					hx-ext="sse"
+					sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat/stream" }
+					sse-swap="message"
+					hx-swap="innerHTML"
+					id="chat-stream"
+					x-ref="chatStream"
+					class="chat-bubble chat-bubble-assistant chat-streaming markdown"
+				></div>
+			</div>
+			<template x-if="chatSending && chatPending.length > 0">
+				<div class="chat-message chat-message-assistant chat-waiting">
+					<div class="chat-message-label">kscribe</div>
+					<div class="chat-bubble chat-bubble-assistant">
+						<span class="chat-typing-dot"></span>
+						<span class="chat-typing-dot"></span>
+						<span class="chat-typing-dot"></span>
+					</div>
+				</div>
+			</template>
+		</div>
+		<div class="chat-input-area" x-show="chatOpen">
 			<form
 				class="chat-form"
 				hx-post={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat" }
 				hx-swap="none"
-				@submit="if (draft.trim() === '') { $event.preventDefault() } else { pending.push(draft) }"
-				hx-on--after-request="draft = ''; pending = []"
+				@submit="if (chatDraft.trim() === '') { $event.preventDefault() } else { chatPending.push(chatDraft); chatSending = true; if ($refs.chatStream) { $refs.chatStream.innerHTML = ''; } $nextTick(() => { if ($refs.chatTranscript) { $refs.chatTranscript.scrollTop = $refs.chatTranscript.scrollHeight } }) }"
+				hx-on--after-request="chatSending = false; if (event.detail.successful) { chatDraft = ''; chatPending = []; window.location.reload(); }"
 			>
 				<input
 					type="text"
 					name="message"
-					x-model="draft"
-					placeholder="Ask about this incident…"
+					x-model="chatDraft"
+					placeholder="Ask about this incident..."
 					class="chat-input"
 					autocomplete="off"
+					:disabled="chatSending"
 				/>
-				<button type="submit" class="chat-send" aria-label="Send message" title="Send message">↑</button>
+				<button type="submit" class="chat-send" aria-label="Send message" title="Send message" :disabled="chatSending || chatDraft.trim() === ''">
+					<span x-show="!chatSending">↑</span>
+					<span x-show="chatSending">...</span>
+				</button>
 			</form>
+			<p class="chat-hint" x-show="!chatSending">Uses the latest diagnosis, context snapshot, and recent chat turns.</p>
+			<p class="chat-hint" x-show="chatSending">Streaming response...</p>
 		</div>
 	</section>
 }
-
 // DiagnosisContextBlock renders the decoded snapshot for one diagnosis.
 // SEC-001: all values are templ text nodes — HTML-escaped automatically.
 templ DiagnosisContextBlock(dv DiagnosisView) {
