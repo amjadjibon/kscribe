@@ -93,7 +93,7 @@ diagnoses → print RCAs → clean up.
 
 ```sh
 # defaults target LM Studio at http://192.168.100.37:1234/v1
-LLM_BASE_URL=http://<host>:1234/v1 LLM_MODEL=google/gemma-4-e4b scripts/local-test.sh
+LLM_BASE_URL=http://<host>:1234/v1 LLM_MODEL=openai/gpt-oss-20b scripts/local-test.sh
 
 KEEP=1 scripts/local-test.sh        # leave it running afterwards
 SKIP_BUILD=1 scripts/local-test.sh  # reuse the image already in the cluster

@@ -20,7 +20,7 @@ IMAGE="${IMAGE:-ghcr.io/amjadjibon/kscribe:latest}"
 # the API version segment (the client appends /chat/completions).
 LLM_PROVIDER="${LLM_PROVIDER:-openai}"
 LLM_BASE_URL="${LLM_BASE_URL:-http://192.168.100.37:1234/v1}"
-LLM_MODEL="${LLM_MODEL:-google/gemma-4-e4b}"
+LLM_MODEL="${LLM_MODEL:-openai/gpt-oss-20b}"
 LLM_API_KEY="${LLM_API_KEY:-local-no-key}"
 TIMEOUT="${TIMEOUT:-180}"   # seconds to wait for diagnoses
 
