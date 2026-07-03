@@ -42,10 +42,32 @@ Scope: `git diff main...HEAD` — 38 files, +1430/−93. Retention pruning, Prom
 ## Machine-Readable Verdict
 
 ```yaml
-verdict: Request Changes
+verdict: Approve
 critical: 0
 high: 0
-medium: 1
-low: 3
-blocking_ids: [MED-001]
+medium: 0
+low: 1
+blocking_ids: []
+```
+
+---
+
+# Iteration 2 (delta review of the fix commit)
+
+- **MED-001 — fixed.** `incidentFromDiagnosis` now pins `UpdatedAt` to `Status.CompletedAt`; regression assertion added to `TestReconcile_MirrorsTerminalIncidentMetadata` (second-precision aware). Non-terminal mirrors (nil CompletedAt) keep the previous now-refresh behaviour, which is correct while a diagnosis is active.
+- **LOW-001 — fixed.** Prune comment now states the sub-second lexicographic caveat.
+- **LOW-002 — fixed.** `PruneDiagnosisCRs` joins per-CR delete errors; `runPruner` logs errors and the deleted count independently, so partial success is visible.
+- **LOW-003 — accepted.** Login brute-force throttling deferred; token is operator-chosen and comparison is constant-time. Documented here as the single remaining Low.
+
+No new findings in the delta. Full suite green (9/9 packages).
+
+## Machine-Readable Verdict (iteration 2)
+
+```yaml
+verdict: Approve
+critical: 0
+high: 0
+medium: 0
+low: 1
+blocking_ids: []
 ```
