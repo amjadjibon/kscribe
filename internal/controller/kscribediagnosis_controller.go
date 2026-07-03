@@ -8,7 +8,9 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -100,17 +102,18 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Transition CR to Diagnosing.
-	kd.Status.Phase = kscribev1alpha1.DiagnosisPhaseDiagnosing
-	kd.Status.StartedAt = &metav1.Time{Time: now}
-	kd.Status.ObservedGeneration = kd.Generation
-	kscribev1alpha1.SetCondition(&kd.Status, metav1.Condition{
-		Type:               kscribev1alpha1.ConditionDiagnosing,
-		Status:             metav1.ConditionTrue,
-		Reason:             "DiagnosisStarted",
-		Message:            "Diagnosis loop started",
-		ObservedGeneration: kd.Generation,
-	})
-	if err := r.Status().Update(ctx, &kd); err != nil {
+	if err := r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
+		o.Status.Phase = kscribev1alpha1.DiagnosisPhaseDiagnosing
+		o.Status.StartedAt = &metav1.Time{Time: now}
+		o.Status.ObservedGeneration = o.Generation
+		kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
+			Type:               kscribev1alpha1.ConditionDiagnosing,
+			Status:             metav1.ConditionTrue,
+			Reason:             "DiagnosisStarted",
+			Message:            "Diagnosis loop started",
+			ObservedGeneration: o.Generation,
+		})
+	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update status (diagnosing): %w", err)
 	}
 	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Diagnosing">%s</span>`, kscribev1alpha1.DiagnosisPhaseDiagnosing))
@@ -179,19 +182,22 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			CompletedAt: &completedAt,
 			TokensUsed:  outcome.TokensUsed,
 		})
-		kd.Status.Phase = kscribev1alpha1.DiagnosisPhaseFailed
-		kd.Status.CompletedAt = &metav1.Time{Time: completedAt}
-		kd.Status.TokensUsed = outcome.TokensUsed
-		kd.Status.ObservedGeneration = kd.Generation
-		kscribev1alpha1.SetCondition(&kd.Status, metav1.Condition{
-			Type:               kscribev1alpha1.ConditionDiagnosed,
-			Status:             metav1.ConditionFalse,
-			Reason:             "ProviderError",
-			Message:            outcome.RawError,
-			ObservedGeneration: kd.Generation,
-		})
 		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
-		return ctrl.Result{}, r.Status().Update(ctx, &kd)
+		// ponytail: patchStatus retries on conflict so the Failed phase always lands,
+		// stopping the retry storm (provider-failure CR stays Diagnosing → requeues forever).
+		return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
+			o.Status.Phase = kscribev1alpha1.DiagnosisPhaseFailed
+			o.Status.CompletedAt = &metav1.Time{Time: completedAt}
+			o.Status.TokensUsed = outcome.TokensUsed
+			o.Status.ObservedGeneration = o.Generation
+			kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
+				Type:               kscribev1alpha1.ConditionDiagnosed,
+				Status:             metav1.ConditionFalse,
+				Reason:             "ProviderError",
+				Message:            outcome.RawError,
+				ObservedGeneration: o.Generation,
+			})
+		})
 	}
 
 	// ADR-003 step 3: write final RCA to SQLite BEFORE updating CR phase.
@@ -219,16 +225,18 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err := r.Store.InsertDiagnosis(ctx, d, rcaPayload); err != nil {
 		// SQLite write failed — stay Diagnosing, set Persisted=False, requeue (ADR-003).
 		logger.Error(err, "sqlite final write failed; requeueing")
-		kd.Status.Persisted = false
-		kscribev1alpha1.SetCondition(&kd.Status, metav1.Condition{
-			Type:               kscribev1alpha1.ConditionPersisted,
-			Status:             metav1.ConditionFalse,
-			Reason:             "StorageError",
-			Message:            err.Error(),
-			ObservedGeneration: kd.Generation,
+		storeErr := err
+		_ = r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
+			o.Status.Persisted = false
+			kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
+				Type:               kscribev1alpha1.ConditionPersisted,
+				Status:             metav1.ConditionFalse,
+				Reason:             "StorageError",
+				Message:            storeErr.Error(),
+				ObservedGeneration: o.Generation,
+			})
 		})
-		_ = r.Status().Update(ctx, &kd)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, storeErr
 	}
 
 	// ADR-003 step 4: SQLite write succeeded — now update CR to Done/Partial.
@@ -243,31 +251,46 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Persisted:   true,
 	})
 
-	kd.Status.Phase = outcome.Phase
-	kd.Status.CompletedAt = &metav1.Time{Time: completedAt}
-	kd.Status.TokensUsed = outcome.TokensUsed
-	kd.Status.Persisted = true
-	kd.Status.ObservedGeneration = kd.Generation
-	if outcome.RCA != nil {
-		kd.Status.Summary = outcome.RCA.Summary
-		kd.Status.RootCause = outcome.RCA.RootCause
-	}
-	kscribev1alpha1.SetCondition(&kd.Status, metav1.Condition{
-		Type:               kscribev1alpha1.ConditionPersisted,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Persisted",
-		Message:            "RCA written to state DB",
-		ObservedGeneration: kd.Generation,
-	})
-	kscribev1alpha1.SetCondition(&kd.Status, metav1.Condition{
-		Type:               kscribev1alpha1.ConditionDiagnosed,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Diagnosed",
-		Message:            "Diagnosis complete",
-		ObservedGeneration: kd.Generation,
-	})
 	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="%s">%s</span>`, outcome.Phase, outcome.Phase))
-	return ctrl.Result{}, r.Status().Update(ctx, &kd)
+	return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
+		o.Status.Phase = outcome.Phase
+		o.Status.CompletedAt = &metav1.Time{Time: completedAt}
+		o.Status.TokensUsed = outcome.TokensUsed
+		o.Status.Persisted = true
+		o.Status.ObservedGeneration = o.Generation
+		if outcome.RCA != nil {
+			o.Status.Summary = outcome.RCA.Summary
+			o.Status.RootCause = outcome.RCA.RootCause
+		}
+		kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
+			Type:               kscribev1alpha1.ConditionPersisted,
+			Status:             metav1.ConditionTrue,
+			Reason:             "Persisted",
+			Message:            "RCA written to state DB",
+			ObservedGeneration: o.Generation,
+		})
+		kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
+			Type:               kscribev1alpha1.ConditionDiagnosed,
+			Status:             metav1.ConditionTrue,
+			Reason:             "Diagnosed",
+			Message:            "Diagnosis complete",
+			ObservedGeneration: o.Generation,
+		})
+	})
+}
+
+// patchStatus re-fetches the CR and applies mutate under conflict retry, so a
+// concurrent modification doesn't drop the status transition (prevents the
+// provider-failure retry storm).
+func (r *KscribeDiagnosisReconciler) patchStatus(ctx context.Context, key types.NamespacedName, mutate func(*kscribev1alpha1.KscribeDiagnosis)) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var cur kscribev1alpha1.KscribeDiagnosis
+		if err := r.Get(ctx, key, &cur); err != nil {
+			return err
+		}
+		mutate(&cur)
+		return r.Status().Update(ctx, &cur)
+	})
 }
 
 // SetupWithManager registers the reconciler with the controller-manager.
