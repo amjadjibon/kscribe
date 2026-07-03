@@ -17,14 +17,23 @@ last_review_base: ''
 
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
-| 1    | —       | —    | —    | —   | —   | —    | —      |
+| 1    | Approve | 0    | 0    | 0   | 1   | inline | Phase 1 implemented inline; Phase 2 dropped (see note) |
 
 ## Stacked PRs
 
 | Phase   | Branch               | PR URL | Base                 | Status  |
 |---------|----------------------|--------|----------------------|---------|
-| phase-1 | openai-sdk-phase-1   | —      | main                 | pending |
-| phase-2 | openai-sdk-phase-2   | —      | openai-sdk-phase-1   | pending |
+| phase-1 | openai-sdk-phase-1   | —      | main                 | ready   |
+| phase-2 | openai-sdk-phase-2   | —      | openai-sdk-phase-1   | dropped |
+
+> **Phase 2 (SDK streaming) dropped.** The openai-go SDK's `ssestream.Stream.Next()`
+> sets an error and aborts on any malformed JSON chunk — it cannot skip bad
+> chunks. That conflicts with REQ-007 (malformed-chunk resilience), a robustness
+> guard the codebase deliberately added for non-conforming providers (Groq /
+> LM Studio). Migrating `CompleteStream` to the SDK would be a net regression
+> (lost resilience, broken error-format tests) for no functional gain. The
+> hand-rolled streaming path (sonic + bufio, resilient) is kept; only `Complete`
+> — the RCA/tool-calling path — is SDK-backed.
 
 ## Active Worktrees
 
@@ -34,7 +43,7 @@ last_review_base: ''
 ## Log
 
 ### Iteration 1
-- [ ] implement-plan
-- [ ] qa
-- [ ] code-review
-- [ ] decide
+- [x] implement-plan (Phase 1 inline; Phase 2 dropped — SDK streaming regresses REQ-007)
+- [x] qa (existing agent/streaming tests + new SDK gate test cover the change)
+- [x] code-review (Approve — 0 crit/high/med, 1 low, 1 info; see REVIEW.md)
+- [x] decide (Clean Exit — awaiting push approval)
