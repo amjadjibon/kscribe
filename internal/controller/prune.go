@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -12,14 +14,16 @@ import (
 
 // PruneDiagnosisCRs deletes KscribeDiagnosis CRs that reached a terminal
 // phase (Done, Partial, Failed) before cutoff. Age is status.completedAt,
-// falling back to the creation timestamp. Returns the number deleted; a
-// failed delete is skipped, not fatal (retried on the next sweep).
+// falling back to the creation timestamp. Returns the number deleted plus
+// any delete errors (joined) so the caller can log them; failed deletes are
+// retried on the next sweep.
 func PruneDiagnosisCRs(ctx context.Context, c client.Client, cutoff time.Time) (int, error) {
 	var list kscribev1alpha1.KscribeDiagnosisList
 	if err := c.List(ctx, &list); err != nil {
 		return 0, err
 	}
 	deleted := 0
+	var errs []error
 	for i := range list.Items {
 		d := &list.Items[i]
 		switch d.Status.Phase {
@@ -35,9 +39,10 @@ func PruneDiagnosisCRs(ctx context.Context, c client.Client, cutoff time.Time) (
 			continue
 		}
 		if err := c.Delete(ctx, d); err != nil && !apierrors.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("delete %s/%s: %w", d.Namespace, d.Name, err))
 			continue
 		}
 		deleted++
 	}
-	return deleted, nil
+	return deleted, errors.Join(errs...)
 }

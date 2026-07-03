@@ -66,7 +66,14 @@ func (r *KscribeDiagnosisReconciler) publish(id, html string) {
 }
 
 func incidentFromDiagnosis(kd *kscribev1alpha1.KscribeDiagnosis) store.Incident {
+	// Terminal mirrors pin updated_at to completion time — otherwise every
+	// resync would refresh it and retention pruning could never cut in.
+	var updatedAt time.Time
+	if kd.Status.CompletedAt != nil {
+		updatedAt = kd.Status.CompletedAt.Time.UTC()
+	}
 	return store.Incident{
+		UpdatedAt:               updatedAt,
 		Namespace:               kd.Namespace,
 		Name:                    kd.Name,
 		EventUID:                kd.Spec.EventUID,

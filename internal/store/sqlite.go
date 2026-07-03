@@ -217,7 +217,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 // explicitly in one transaction. Returns the number of incidents deleted.
 // Timestamps are stored as RFC3339Nano strings (see UpsertIncident), so the
 // cutoff is formatted the same way; lexicographic order matches chronological
-// order for UTC RFC3339 strings.
+// order for UTC RFC3339 strings except within the same second (variable-width
+// fractions) — irrelevant for a day-scale retention cutoff.
 func (s *Store) Prune(ctx context.Context, olderThan time.Time) (int64, error) {
 	cutoff := olderThan.UTC().Format(time.RFC3339Nano)
 

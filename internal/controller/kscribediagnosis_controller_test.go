@@ -431,6 +431,8 @@ func TestReconcile_MirrorsTerminalIncidentMetadata(t *testing.T) {
 	kd.Status.Phase = kscribev1alpha1.DiagnosisPhaseDone
 	kd.Status.TokensUsed = 99
 	kd.Status.Persisted = true
+	completed := metav1.Time{Time: time.Now().Add(-2 * time.Hour)}
+	kd.Status.CompletedAt = &completed
 	fc := buildClient(scheme, kd).Build()
 
 	st := &fakeStore{}
@@ -453,6 +455,12 @@ func TestReconcile_MirrorsTerminalIncidentMetadata(t *testing.T) {
 	}
 	if got.Phase != "Done" || got.TokensUsed != 99 || !got.Persisted {
 		t.Fatalf("terminal mirror missing status metadata: %+v", got)
+	}
+	// MED-001: the mirror must pin UpdatedAt to completion time, not now —
+	// otherwise resyncs keep refreshing updated_at and pruning never cuts in.
+	// metav1.Time round-trips at second precision, hence the truncation.
+	if !got.UpdatedAt.Equal(completed.Time.UTC().Truncate(time.Second)) {
+		t.Fatalf("terminal mirror UpdatedAt = %v, want completion time %v", got.UpdatedAt, completed.Time.UTC())
 	}
 }
 

@@ -65,9 +65,11 @@ func runPruner(ctx context.Context, st *store.Store, c client.Client, retention 
 			slog.Info("pruned sqlite history", "incidents_deleted", n, "cutoff", cutoff.UTC().Format(time.RFC3339))
 		}
 
-		if deleted, err := controller.PruneDiagnosisCRs(ctx, c, cutoff); err != nil {
+		deleted, err := controller.PruneDiagnosisCRs(ctx, c, cutoff)
+		if err != nil {
 			slog.Error("prune diagnosis CRs", "error", err)
-		} else if deleted > 0 {
+		}
+		if deleted > 0 {
 			slog.Info("pruned finished diagnosis CRs", "deleted", deleted)
 		}
 
