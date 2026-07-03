@@ -7,7 +7,7 @@ max_iterations: 3
 max_phases: 5
 max_agents: 3
 current_iteration: 1
-status: running
+status: complete
 last_review_base: ''
 ---
 
@@ -23,7 +23,7 @@ last_review_base: ''
 
 | Phase   | Branch               | PR URL | Base                 | Status  |
 |---------|----------------------|--------|----------------------|---------|
-| phase-1 | openai-sdk-phase-1   | —      | main                 | ready   |
+| phase-1 | openai-sdk-phase-1   | https://github.com/amjadjibon/kscribe/pull/29 | main | open |
 | phase-2 | openai-sdk-phase-2   | —      | openai-sdk-phase-1   | dropped |
 
 > **Phase 2 (SDK streaming) dropped.** The openai-go SDK's `ssestream.Stream.Next()`
