@@ -239,7 +239,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 
 			// Web dashboard alongside the manager, bound to the manager context.
 			// provider is shared with the reconciler (same client, no extra connections).
-			webSrv := web.New(st, broker, provider)
+			webSrv := web.New(st, broker, provider).WithAuthToken(cfg.DashboardToken)
 			if err := mgr.Add(ctrlmgr.RunnableFunc(func(ctx context.Context) error {
 				srv := &http.Server{
 					Addr:    cfg.Addr,

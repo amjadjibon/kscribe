@@ -62,6 +62,13 @@ metrics:
   enabled: true
   port: 8081
 
+dashboard:
+  # Static bearer token protecting the dashboard (empty = auth disabled).
+  # Provide inline (a Secret is created) OR point at an existing Secret.
+  token: ""
+  existingSecret: ""
+  existingSecretKey: dashboard-token
+
 llm:
   # provider "openai" (default) or "google"/"gemini". google auto-targets Gemini's
   # OpenAI-compatible endpoint; any OpenAI-compatible API works via baseURL.

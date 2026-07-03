@@ -51,6 +51,11 @@ type Config struct {
 	// finished KscribeDiagnosis CRs are kept before pruning. 0 disables pruning.
 	RetentionPeriod time.Duration `env:"KSCRIBE_RETENTION_PERIOD" envDefault:"720h"`
 
+	// DashboardToken protects the dashboard with static bearer-token auth
+	// (Authorization header or login cookie). Empty disables auth.
+	// SEC-001: never logged.
+	DashboardToken string `env:"KSCRIBE_DASHBOARD_TOKEN" envDefault:""`
+
 	// ResyncPeriod is how often the controller re-syncs watched resources.
 	ResyncPeriod time.Duration `env:"KSCRIBE_RESYNC_PERIOD" envDefault:"10m"`
 }

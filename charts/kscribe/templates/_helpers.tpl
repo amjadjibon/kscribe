@@ -56,3 +56,20 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 api-key
 {{- end -}}
 {{- end -}}
+
+{{/* Name of the Secret holding the dashboard auth token. */}}
+{{- define "kscribe.dashboardSecretName" -}}
+{{- if .Values.dashboard.existingSecret -}}
+{{- .Values.dashboard.existingSecret -}}
+{{- else -}}
+{{- printf "%s-dashboard" (include "kscribe.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "kscribe.dashboardSecretKey" -}}
+{{- if .Values.dashboard.existingSecret -}}
+{{- .Values.dashboard.existingSecretKey -}}
+{{- else -}}
+dashboard-token
+{{- end -}}
+{{- end -}}
