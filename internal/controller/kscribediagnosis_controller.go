@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -52,6 +53,7 @@ type KscribeDiagnosisReconciler struct {
 	Tools         []agent.ToolDefinition
 	ToolExecutor  agent.ToolExecutor   // nil falls back to stub error in agent loop
 	KubeClient    kubernetes.Interface // nil → falls back to minimal spec-only snapshot
+	RateLimiter   *RateLimiter         // nil = unlimited diagnosis starts
 }
 
 const diagnosingRecoveryAfter = 10 * time.Minute
@@ -138,6 +140,24 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			return ctrl.Result{}, fmt.Errorf("upsert incident (terminal mirror): %w", err)
 		}
 		return ctrl.Result{}, nil
+	}
+
+	// Global cost cap: over-limit CRs stay Pending and requeue — never dropped.
+	if !r.RateLimiter.Allow() {
+		metrics.DiagnosesThrottledTotal.Inc()
+		logger.Info("diagnosis throttled by rate limit", "name", req.Name, "namespace", req.Namespace)
+		_ = r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
+			o.Status.Phase = kscribev1alpha1.DiagnosisPhasePending
+			kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
+				Type:               kscribev1alpha1.ConditionDiagnosed,
+				Status:             metav1.ConditionFalse,
+				Reason:             "RateLimited",
+				Message:            "diagnosis start rate limit reached; will retry",
+				ObservedGeneration: o.Generation,
+			})
+		})
+		// 2–5 min with jitter so a storm of throttled CRs doesn't retry in lockstep.
+		return ctrl.Result{RequeueAfter: 2*time.Minute + time.Duration(rand.Int64N(int64(3*time.Minute)))}, nil
 	}
 
 	logger.Info("starting diagnosis", "name", req.Name, "namespace", req.Namespace, "reason", kd.Spec.Reason)

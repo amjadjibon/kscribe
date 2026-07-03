@@ -650,3 +650,50 @@ func TestReconcile_ProviderFailure_ConflictSafeReachFailed(t *testing.T) {
 		t.Fatalf("want Failed, got %s — patchStatus did not retry through the conflict", got.Status.Phase)
 	}
 }
+
+// TestReconcile_RateLimited proves a throttled diagnosis stays Pending with a
+// requeue and never reaches the provider or the store.
+func TestReconcile_RateLimited(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-throttled", "default")
+	fc := buildClient(scheme, kd).Build()
+
+	st := &fakeStore{}
+	prov := goodProvider()
+	r := reconcilerFor(st, prov)
+	r.Client = fc
+	lim := controller.NewRateLimiter(1)
+	lim.Allow() // exhaust the budget
+	r.RateLimiter = lim
+
+	res, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-throttled", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+	if res.RequeueAfter < 2*time.Minute || res.RequeueAfter > 5*time.Minute {
+		t.Fatalf("RequeueAfter = %v, want between 2m and 5m", res.RequeueAfter)
+	}
+	if st.insertCalled != 0 {
+		t.Fatalf("store must not be written when throttled; insertCalled=%d", st.insertCalled)
+	}
+
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-throttled", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhasePending {
+		t.Fatalf("throttled CR phase = %s, want Pending", got.Status.Phase)
+	}
+	var reason string
+	for _, c := range got.Status.Conditions {
+		if c.Type == kscribev1alpha1.ConditionDiagnosed {
+			reason = c.Reason
+		}
+	}
+	if reason != "RateLimited" {
+		t.Fatalf("want Diagnosed condition with reason RateLimited, got %q", reason)
+	}
+}

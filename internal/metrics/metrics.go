@@ -21,6 +21,13 @@ var (
 		Help: "Total LLM tokens consumed.",
 	}, []string{"provider", "model"})
 
+	// DiagnosesThrottledTotal counts diagnosis starts denied by the global
+	// hourly rate limit (the CR stays Pending and requeues).
+	DiagnosesThrottledTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "kscribe_diagnoses_throttled_total",
+		Help: "Diagnosis starts denied by the hourly rate limit.",
+	})
+
 	// LLMRequestSeconds observes the wall-clock duration of one diagnosis
 	// agent run (all provider round-trips of the tool loop included).
 	LLMRequestSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -31,5 +38,5 @@ var (
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(DiagnosesTotal, LLMTokensTotal, LLMRequestSeconds)
+	ctrlmetrics.Registry.MustRegister(DiagnosesTotal, DiagnosesThrottledTotal, LLMTokensTotal, LLMRequestSeconds)
 }

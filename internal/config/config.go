@@ -35,6 +35,11 @@ type Config struct {
 	// DiagnosisConcurrency is the max parallel diagnosis goroutines.
 	DiagnosisConcurrency int `env:"KSCRIBE_DIAGNOSIS_CONCURRENCY" envDefault:"4"`
 
+	// MaxDiagnosesPerHour caps LLM diagnosis starts per hour across the whole
+	// operator (cost guard for event storms). 0 = unlimited. Over-limit CRs
+	// stay Pending and requeue.
+	MaxDiagnosesPerHour int `env:"KSCRIBE_MAX_DIAGNOSES_PER_HOUR" envDefault:"30"`
+
 	// EventReasonAllowlist is the set of Kubernetes event reasons kscribe
 	// will act on. Comma-separated in env form.
 	EventReasonAllowlist []string `env:"KSCRIBE_EVENT_REASON_ALLOWLIST" envSeparator:"," envDefault:"BackOff,OOMKilling,Failed,FailedScheduling"`

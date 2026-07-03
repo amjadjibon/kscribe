@@ -62,6 +62,10 @@ metrics:
   enabled: true
   port: 8081
 
+# Max LLM diagnosis starts per hour across the operator (cost guard for
+# event storms). 0 = unlimited; over-limit diagnoses stay Pending and retry.
+maxDiagnosesPerHour: 30
+
 dashboard:
   # Static bearer token protecting the dashboard (empty = auth disabled).
   # Provide inline (a Secret is created) OR point at an existing Secret.

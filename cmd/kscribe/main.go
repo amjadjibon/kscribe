@@ -232,6 +232,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				Tools:         agent.KubeTools(),
 				KubeClient:    kcs,
 				ToolExecutor:  &controller.KubeToolExecutor{Client: mgr.GetClient(), Kube: kcs},
+				RateLimiter:   controller.NewRateLimiter(cfg.MaxDiagnosesPerHour),
 			}
 			if err := reconciler.SetupWithManager(mgr); err != nil {
 				return fmt.Errorf("setup diagnosis reconciler: %w", err)

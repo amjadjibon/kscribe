@@ -632,6 +632,8 @@ spec:
           value: "true"
         - name: KSCRIBE_RETENTION_PERIOD
           value: "720h"
+        - name: KSCRIBE_MAX_DIAGNOSES_PER_HOUR
+          value: "30"
         - name: KSCRIBE_METRICS_ADDR
           value: ":8081"
         ports:
