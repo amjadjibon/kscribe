@@ -4,15 +4,20 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	kscribev1alpha1 "github.com/amjadjibon/kscribe/api/v1alpha1"
 	"github.com/amjadjibon/kscribe/internal/agent"
@@ -535,5 +540,65 @@ func TestReconcile_EnrichedSnapshotFeedsEvents(t *testing.T) {
 	if !strings.Contains(prompt.String(), "SeededOOMReason") {
 		t.Errorf("SeededOOMReason not found in prompt — enriched snapshot branch did not run; prompt: %q",
 			prompt.String())
+	}
+}
+
+// TestReconcile_ProviderFailure_ConflictSafeReachFailed proves the retry-storm fix:
+// when the first Status().Update for the Failed transition hits an optimistic-lock conflict,
+// patchStatus retries and the CR still lands on Failed — returning nil so there is no requeue.
+func TestReconcile_ProviderFailure_ConflictSafeReachFailed(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-conflict", "default")
+
+	// failingProvider always returns a provider error → outcome.Phase == Failed.
+	failProv := &fixedProvider{err: errors.New("provider 401 unauthorized")}
+
+	// The interceptor fires a Conflict error on the very first SubResource Update (status),
+	// then delegates all subsequent calls to the real fake client.
+	var conflictFired atomic.Bool
+	fc := buildClient(scheme, kd).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, c client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+				if subResourceName == "status" && !conflictFired.Swap(true) {
+					return apierrors.NewConflict(
+						schema.GroupResource{Group: "kscribe.io", Resource: "kscribediagnoses"},
+						obj.GetName(),
+						errors.New("test-injected conflict"),
+					)
+				}
+				return c.SubResource(subResourceName).Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	st := &fakeStore{}
+	r := reconcilerFor(st, failProv)
+	r.Client = fc
+
+	result, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-conflict", Namespace: "default"},
+	})
+
+	// patchStatus must have retried through the conflict → nil error, no requeue storm.
+	if err != nil {
+		t.Fatalf("Reconcile returned error after conflict retry: %v", err)
+	}
+	if result.Requeue || result.RequeueAfter != 0 {
+		t.Fatalf("Reconcile must not requeue on provider failure: %+v", result)
+	}
+
+	// The injected conflict must have fired at least once.
+	if !conflictFired.Load() {
+		t.Fatal("conflict interceptor never fired — test did not exercise the retry path")
+	}
+
+	// CR must have reached Failed (not stuck on Diagnosing).
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-conflict", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhaseFailed {
+		t.Fatalf("want Failed, got %s — patchStatus did not retry through the conflict", got.Status.Phase)
 	}
 }
