@@ -55,9 +55,15 @@ spec:
           value: {{ .Values.redactEnabled | quote }}
         - name: KSCRIBE_RETENTION_PERIOD
           value: {{ .Values.retentionPeriod | quote }}
+        - name: KSCRIBE_METRICS_ADDR
+          value: {{ .Values.metrics.enabled | ternary (printf ":%v" .Values.metrics.port) "0" | quote }}
         ports:
         - name: http
           containerPort: {{ .Values.service.port }}
+        {{- if .Values.metrics.enabled }}
+        - name: metrics
+          containerPort: {{ .Values.metrics.port }}
+        {{- end }}
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
         resources:

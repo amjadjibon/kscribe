@@ -559,6 +559,10 @@ metadata:
     app.kubernetes.io/instance: kscribe
     app.kubernetes.io/version: "latest"
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8081"
+    prometheus.io/path: /metrics
 spec:
   type: ClusterIP
   selector:
@@ -568,6 +572,9 @@ spec:
   - name: http
     port: 8080
     targetPort: http
+  - name: metrics
+    port: 8081
+    targetPort: metrics
 ---
 # Source: kscribe/templates/deployment.yaml
 apiVersion: apps/v1
@@ -625,9 +632,13 @@ spec:
           value: "true"
         - name: KSCRIBE_RETENTION_PERIOD
           value: "720h"
+        - name: KSCRIBE_METRICS_ADDR
+          value: ":8081"
         ports:
         - name: http
           containerPort: 8080
+        - name: metrics
+          containerPort: 8081
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

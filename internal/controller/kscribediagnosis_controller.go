@@ -21,6 +21,7 @@ import (
 
 	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/enricher"
+	"github.com/amjadjibon/kscribe/internal/metrics"
 	"github.com/amjadjibon/kscribe/internal/store"
 )
 
@@ -230,7 +231,10 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Tools:    r.Tools,
 		MaxIter:  maxIter,
 	}
+	runStart := time.Now()
 	outcome := ag.Run(ctx, snapshotJSON)
+	metrics.LLMRequestSeconds.WithLabelValues(llmProvider).Observe(time.Since(runStart).Seconds())
+	metrics.LLMTokensTotal.WithLabelValues(llmProvider, llmModel).Add(float64(outcome.TokensUsed))
 
 	completedAt := time.Now().UTC()
 
@@ -253,6 +257,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			LLMModel:                llmModel,
 			TokensUsed:              outcome.TokensUsed,
 		})
+		metrics.DiagnosesTotal.WithLabelValues("failed").Inc()
 		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
 		// ponytail: patchStatus retries on conflict so the Failed phase always lands,
 		// stopping the retry storm (provider-failure CR stays Diagnosing → requeues forever).
@@ -331,6 +336,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Persisted:               true,
 	})
 
+	metrics.DiagnosesTotal.WithLabelValues(strings.ToLower(string(outcome.Phase))).Inc()
 	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="%s">%s</span>`, outcome.Phase, outcome.Phase))
 	return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
 		o.Status.Phase = outcome.Phase

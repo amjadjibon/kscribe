@@ -13,6 +13,10 @@ type Config struct {
 	// Web server listen address.
 	Addr string `env:"KSCRIBE_ADDR" envDefault:":8080"`
 
+	// MetricsAddr is the controller-runtime Prometheus metrics listen
+	// address. "0" disables the metrics server.
+	MetricsAddr string `env:"KSCRIBE_METRICS_ADDR" envDefault:":8081"`
+
 	// Kubernetes namespace the operator manages. Empty means cluster-wide.
 	OperatorNamespace string `env:"KSCRIBE_OPERATOR_NAMESPACE" envDefault:""`
 

@@ -5,6 +5,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "kscribe.labels" . | nindent 4 }}
+  {{- if .Values.metrics.enabled }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: {{ .Values.metrics.port | quote }}
+    prometheus.io/path: /metrics
+  {{- end }}
 spec:
   type: {{ .Values.service.type }}
   selector:
@@ -13,3 +19,8 @@ spec:
   - name: http
     port: {{ .Values.service.port }}
     targetPort: http
+  {{- if .Values.metrics.enabled }}
+  - name: metrics
+    port: {{ .Values.metrics.port }}
+    targetPort: metrics
+  {{- end }}

@@ -173,7 +173,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				LeaderElection:          cfg.LeaderElect,
 				LeaderElectionID:        "kscribe.amjadjibon.dev",
 				LeaderElectionNamespace: leaderNS,
-				Metrics:                 metricsserver.Options{BindAddress: "0"}, // dashboard owns /healthz
+				Metrics:                 metricsserver.Options{BindAddress: cfg.MetricsAddr}, // dashboard owns /healthz
 			}
 			// Restrict cache to operator namespace when set; empty = cluster-wide.
 			if cfg.OperatorNamespace != "" {
