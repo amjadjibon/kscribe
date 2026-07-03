@@ -623,6 +623,8 @@ spec:
           value: "false"
         - name: KSCRIBE_REDACT_ENABLED
           value: "true"
+        - name: KSCRIBE_RETENTION_PERIOD
+          value: "720h"
         ports:
         - name: http
           containerPort: 8080

@@ -43,6 +43,10 @@ type Config struct {
 	// DBPath is the filesystem path for the SQLite state database.
 	DBPath string `env:"KSCRIBE_DB_PATH" envDefault:"kscribe.db"`
 
+	// RetentionPeriod is how long incidents, diagnoses, chat history, and
+	// finished KscribeDiagnosis CRs are kept before pruning. 0 disables pruning.
+	RetentionPeriod time.Duration `env:"KSCRIBE_RETENTION_PERIOD" envDefault:"720h"`
+
 	// ResyncPeriod is how often the controller re-syncs watched resources.
 	ResyncPeriod time.Duration `env:"KSCRIBE_RESYNC_PERIOD" envDefault:"10m"`
 }

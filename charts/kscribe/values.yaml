@@ -53,6 +53,10 @@ securityContext:
 leaderElect: false
 redactEnabled: true # SEC-001: redaction is always enforced; this is audit metadata.
 
+# How long incidents, diagnoses, chat history, and finished KscribeDiagnosis
+# CRs are kept before pruning (Go duration). "0" disables pruning.
+retentionPeriod: 720h
+
 llm:
   # provider "openai" (default) or "google"/"gemini". google auto-targets Gemini's
   # OpenAI-compatible endpoint; any OpenAI-compatible API works via baseURL.
