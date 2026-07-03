@@ -1,12 +1,14 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"html"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/amjadjibon/kscribe/internal/agent"
+	"github.com/amjadjibon/kscribe/internal/web/templates"
 )
 
 const (
@@ -19,9 +21,9 @@ const (
 // incident context and recent history, streams the response to the SSE broker,
 // and persists the assistant reply.
 //
-// SEC-002: every SSE frame carries html.EscapeString(accumulated) so raw model
-// output never reaches the wire as HTML. The persisted assistant message keeps
-// the original text (authoritative record).
+// SEC-002: every SSE frame carries sanitized Markdown HTML, so raw model output
+// never reaches the wire as executable HTML. The persisted assistant message
+// keeps the original Markdown text (authoritative record).
 //
 // Broker drop mitigation: we publish the *accumulated* string on every delta,
 // not per-token deltas, so a slow subscriber catching up always gets the latest
@@ -95,8 +97,11 @@ func RunChat(
 	var accumulated strings.Builder
 	_, err = agent.StreamOrComplete(ctx, provider, req, func(delta string) error {
 		accumulated.WriteString(delta)
-		// SEC-002: escape before putting on the wire; never raw model HTML.
-		broker.Publish(topic, Event{HTML: html.EscapeString(accumulated.String())})
+		rendered, err := renderChatMarkdown(ctx, accumulated.String())
+		if err != nil {
+			rendered = html.EscapeString(accumulated.String())
+		}
+		broker.Publish(topic, Event{HTML: rendered})
 		return nil
 	})
 	if err != nil {
@@ -111,4 +116,12 @@ func RunChat(
 		reply = "(no response from model)"
 	}
 	return st.AppendChatMessage(ctx, ns, name, "assistant", reply)
+}
+
+func renderChatMarkdown(ctx context.Context, md string) (string, error) {
+	var buf bytes.Buffer
+	if err := templates.RenderMarkdown(md).Render(ctx, &buf); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

@@ -219,6 +219,40 @@ func TestList(t *testing.T) {
 	}
 }
 
+func TestListUsesFallbackForMissingObjectAndReason(t *testing.T) {
+	now := time.Now().UTC()
+	st := &fakeStore{incidents: map[string]*store.IncidentDetail{
+		"my-ns/ksd-empty": {
+			Incident: store.Incident{
+				Namespace: "my-ns",
+				Name:      "ksd-empty",
+				Phase:     "Done",
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}}
+	srv := web.New(st, web.NewBroker(), nil)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	_, _ = io.Copy(&sb, resp.Body)
+	body := sb.String()
+
+	if strings.Contains(body, "<td class=\"incident-object muted-value\">/</td>") {
+		t.Fatal("object fallback rendered as bare slash")
+	}
+	if !strings.Contains(body, "Not captured") {
+		t.Fatal("want missing object/reason fallback in list")
+	}
+}
+
 func TestDetail(t *testing.T) {
 	ts, _ := newTestServer(t)
 	defer ts.Close()
@@ -275,8 +309,8 @@ func TestStaticAssets(t *testing.T) {
 	defer ts.Close()
 
 	cases := []struct {
-		path    string
-		wantCT  string
+		path   string
+		wantCT string
 	}{
 		{"/static/css/app.css", "text/css"},
 		{"/static/js/alpine.min.js", "text/javascript"},
@@ -980,7 +1014,7 @@ func (p *capturingProvider) CompleteStream(_ context.Context, req agent.Request,
 	return agent.Response{Choices: []agent.Choice{{Message: agent.Message{Content: p.delta}}}}, nil
 }
 
-// TestRunChat asserts SEC-002 (escaped SSE frames), message persistence,
+// TestRunChat asserts SEC-002 (sanitized Markdown SSE frames), message persistence,
 // history inclusion, and bounded system message (CON-007).
 func TestRunChat(t *testing.T) {
 	ctx := context.Background()
@@ -1007,8 +1041,8 @@ func TestRunChat(t *testing.T) {
 	_ = st.AppendChatMessage(ctx, ns, name, "user", "first question")
 	_ = st.AppendChatMessage(ctx, ns, name, "assistant", "first answer")
 
-	// XSS payload from the "model".
-	xssPayload := `<script>alert(1)</script>`
+	// Markdown + XSS payload from the "model".
+	xssPayload := `**OOM** <script>alert(1)</script>`
 	prov := &capturingProvider{delta: xssPayload}
 
 	broker := web.NewBroker()
@@ -1032,7 +1066,7 @@ drain:
 		}
 	}
 
-	// SEC-002: no raw <script> on the wire.
+	// SEC-002: no raw <script> on the wire, but Markdown is rendered.
 	if len(events) == 0 {
 		t.Fatal("expected at least one published event")
 	}
@@ -1040,8 +1074,8 @@ drain:
 		if strings.Contains(ev.HTML, "<script>") {
 			t.Errorf("SEC-002: raw <script> in SSE payload: %q", ev.HTML)
 		}
-		if !strings.Contains(ev.HTML, "&lt;script&gt;") {
-			t.Errorf("SEC-002: escaped form missing from SSE payload: %q", ev.HTML)
+		if !strings.Contains(ev.HTML, "<strong>OOM</strong>") {
+			t.Errorf("Markdown missing from SSE payload: %q", ev.HTML)
 		}
 	}
 
@@ -1085,7 +1119,7 @@ drain:
 	}
 }
 
-// TestChatDetailRender asserts the detail page renders the Chat tab markup
+// TestChatDetailRender asserts the detail page renders the Chat sidebar markup
 // and seeded chat history (assistant markdown rendered). TASK-021.
 func TestChatDetailRender(t *testing.T) {
 	now := time.Now().UTC()
@@ -1122,9 +1156,15 @@ func TestChatDetailRender(t *testing.T) {
 	_, _ = io.Copy(&sb, resp.Body)
 	body := sb.String()
 
-	// Chat tab button present.
-	if !strings.Contains(body, "tab='chat'") {
-		t.Error("want Chat tab button in page")
+	// Chat is in the persistent sidebar, not hidden behind a tab.
+	if !strings.Contains(body, `class="detail-sidebar"`) {
+		t.Error("want Chat sidebar in page")
+	}
+	if !strings.Contains(body, `chatOpen: true`) || !strings.Contains(body, `chat-rail-button`) {
+		t.Error("want collapsible chat rail controls in page")
+	}
+	if strings.Contains(body, "tab='chat'") {
+		t.Error("chat should not be rendered as a tab")
 	}
 	// User message in history.
 	if !strings.Contains(body, "what happened?") {

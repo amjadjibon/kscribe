@@ -125,11 +125,12 @@ func TestUpsertIncident(t *testing.T) {
 		t.Errorf("expected 1 row after two upserts, got %d", rowCount)
 	}
 
-	var phase string
+	var phase, kind, name, reason, message string
 	var tokens int64
 	if err := s.db.QueryRow(
-		"SELECT phase, tokens_used FROM incidents WHERE namespace='default' AND name='test-incident'",
-	).Scan(&phase, &tokens); err != nil {
+		`SELECT phase, tokens_used, involved_object_kind, involved_object_name, reason, message
+FROM incidents WHERE namespace='default' AND name='test-incident'`,
+	).Scan(&phase, &tokens, &kind, &name, &reason, &message); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if phase != "Done" {
@@ -137,6 +138,45 @@ func TestUpsertIncident(t *testing.T) {
 	}
 	if tokens != 1234 {
 		t.Errorf("tokens_used = %d, want 1234", tokens)
+	}
+	if kind != "Pod" || name != "myapp-abc" || reason != "BackOff" || message != "Back-off restarting failed container" {
+		t.Errorf("metadata wiped after update: kind=%q name=%q reason=%q message=%q", kind, name, reason, message)
+	}
+}
+
+func TestUpsertIncidentPreservesMetadataOnPhaseOnlyUpdate(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	if err := s.UpsertIncident(ctx, Incident{
+		Namespace:               "my-ns",
+		Name:                    "ksd-1",
+		EventUID:                "uid-1",
+		InvolvedObjectKind:      "Pod",
+		InvolvedObjectName:      "api-7d9",
+		InvolvedObjectNamespace: "my-ns",
+		Reason:                  "BackOff",
+		Message:                 "back-off restarting failed container",
+		Phase:                   "Diagnosing",
+	}); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if err := s.UpsertIncident(ctx, Incident{
+		Namespace:  "my-ns",
+		Name:       "ksd-1",
+		Phase:      "Done",
+		TokensUsed: 42,
+		Persisted:  true,
+	}); err != nil {
+		t.Fatalf("phase-only upsert: %v", err)
+	}
+
+	got, err := s.GetIncident(ctx, "my-ns", "ksd-1")
+	if err != nil {
+		t.Fatalf("GetIncident: %v", err)
+	}
+	if got.InvolvedObjectKind != "Pod" || got.InvolvedObjectName != "api-7d9" || got.Reason != "BackOff" || got.Message == "" {
+		t.Fatalf("metadata not preserved: %+v", got.Incident)
 	}
 }
 

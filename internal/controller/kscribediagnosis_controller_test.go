@@ -384,15 +384,18 @@ func (p *toolCallProvider) Complete(_ context.Context, _ agent.Request) (agent.R
 	return p.rcaResp, nil
 }
 
-// TestReconcile_IdempotentOnNonPending proves the reconciler skips CRs not in Pending/empty phase.
-func TestReconcile_IdempotentOnNonPending(t *testing.T) {
+// TestReconcile_MirrorsTerminalIncidentMetadata proves terminal CRs do not rerun diagnosis,
+// but still refresh the SQLite incident mirror from the CR spec/status.
+func TestReconcile_MirrorsTerminalIncidentMetadata(t *testing.T) {
 	scheme := testScheme()
 	kd := newKD("diag-done", "default")
 	kd.Status.Phase = kscribev1alpha1.DiagnosisPhaseDone
+	kd.Status.TokensUsed = 99
+	kd.Status.Persisted = true
 	fc := buildClient(scheme, kd).Build()
 
 	st := &fakeStore{}
-	r := reconcilerFor(st, goodProvider())
+	r := reconcilerFor(st, &fixedProvider{err: errors.New("provider should not be called")})
 	r.Client = fc
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -401,10 +404,16 @@ func TestReconcile_IdempotentOnNonPending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Store must not have been touched.
-	if st.upsertCalled != 0 || st.insertCalled != 0 {
-		t.Fatalf("store must not be called for non-Pending CR; upsert=%d insert=%d",
+	if st.upsertCalled != 1 || st.insertCalled != 0 {
+		t.Fatalf("terminal CR should only upsert incident mirror; upsert=%d insert=%d",
 			st.upsertCalled, st.insertCalled)
+	}
+	got := st.incidents[0]
+	if got.InvolvedObjectKind != "Pod" || got.InvolvedObjectName != "pod-1" || got.Reason != "BackOff" {
+		t.Fatalf("terminal mirror missing spec metadata: %+v", got)
+	}
+	if got.Phase != "Done" || got.TokensUsed != 99 || !got.Persisted {
+		t.Fatalf("terminal mirror missing status metadata: %+v", got)
 	}
 }
 
@@ -467,8 +476,8 @@ func (p *capturingProvider) Complete(_ context.Context, req agent.Request) (agen
 func enrichedScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	sch := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(sch)    // corev1, appsv1, …
-	_ = kscribev1alpha1.AddToScheme(sch)   // KscribeDiagnosis
+	_ = clientgoscheme.AddToScheme(sch)  // corev1, appsv1, …
+	_ = kscribev1alpha1.AddToScheme(sch) // KscribeDiagnosis
 	return sch
 }
 

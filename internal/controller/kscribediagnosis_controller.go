@@ -47,7 +47,7 @@ type KscribeDiagnosisReconciler struct {
 	MaxIter       int       // default max tool-call iterations; overridable via CR spec
 	Concurrency   int       // MaxConcurrentReconciles; 0 defaults to 1
 	Tools         []agent.ToolDefinition
-	ToolExecutor  agent.ToolExecutor  // nil falls back to stub error in agent loop
+	ToolExecutor  agent.ToolExecutor   // nil falls back to stub error in agent loop
 	KubeClient    kubernetes.Interface // nil → falls back to minimal spec-only snapshot
 }
 
@@ -56,6 +56,35 @@ func (r *KscribeDiagnosisReconciler) publish(id, html string) {
 	if r.Publisher != nil {
 		r.Publisher.Publish(id, html)
 	}
+}
+
+func incidentFromDiagnosis(kd *kscribev1alpha1.KscribeDiagnosis) store.Incident {
+	return store.Incident{
+		Namespace:               kd.Namespace,
+		Name:                    kd.Name,
+		EventUID:                kd.Spec.EventUID,
+		InvolvedObjectKind:      kd.Spec.InvolvedObjectKind,
+		InvolvedObjectName:      kd.Spec.InvolvedObjectName,
+		InvolvedObjectNamespace: kd.Spec.InvolvedObjectNamespace,
+		Reason:                  kd.Spec.Reason,
+		Message:                 kd.Spec.Message,
+		Phase:                   string(kd.Status.Phase),
+		StartedAt:               metaTimePtr(kd.Status.StartedAt),
+		CompletedAt:             metaTimePtr(kd.Status.CompletedAt),
+		LLMProvider:             kd.Status.LLMProvider,
+		LLMModel:                kd.Status.LLMModel,
+		TokensUsed:              kd.Status.TokensUsed,
+		PromptRedacted:          kd.Status.PromptRedacted,
+		Persisted:               kd.Status.Persisted,
+	}
+}
+
+func metaTimePtr(t *metav1.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	out := t.Time.UTC()
+	return &out
 }
 
 // Reconcile drives a KscribeDiagnosis CR from Pending → Diagnosing → Done/Partial/Failed.
@@ -71,13 +100,19 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Proceed for Pending/unset, or Diagnosing when not yet persisted (ADR-003 crash recovery).
 	switch kd.Status.Phase {
 	case "", kscribev1alpha1.DiagnosisPhasePending:
-		// proceed
+	// proceed
 	case kscribev1alpha1.DiagnosisPhaseDiagnosing:
 		if kd.Status.Persisted {
+			if err := r.Store.UpsertIncident(ctx, incidentFromDiagnosis(&kd)); err != nil {
+				return ctrl.Result{}, fmt.Errorf("upsert incident (terminal mirror): %w", err)
+			}
 			return ctrl.Result{}, nil
 		}
 		// Unpersisted Diagnosing: re-run diagnosis+persist so a transient store failure recovers.
 	default:
+		if err := r.Store.UpsertIncident(ctx, incidentFromDiagnosis(&kd)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("upsert incident (terminal mirror): %w", err)
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -174,13 +209,18 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if outcome.Phase == kscribev1alpha1.DiagnosisPhaseFailed {
 		logger.Info("provider failure", "error", outcome.RawError)
 		_ = r.Store.UpsertIncident(ctx, store.Incident{
-			Namespace:   kd.Namespace,
-			Name:        kd.Name,
-			EventUID:    kd.Spec.EventUID,
-			Phase:       string(kscribev1alpha1.DiagnosisPhaseFailed),
-			StartedAt:   &now,
-			CompletedAt: &completedAt,
-			TokensUsed:  outcome.TokensUsed,
+			Namespace:               kd.Namespace,
+			Name:                    kd.Name,
+			EventUID:                kd.Spec.EventUID,
+			InvolvedObjectKind:      kd.Spec.InvolvedObjectKind,
+			InvolvedObjectName:      kd.Spec.InvolvedObjectName,
+			InvolvedObjectNamespace: kd.Spec.InvolvedObjectNamespace,
+			Reason:                  kd.Spec.Reason,
+			Message:                 kd.Spec.Message,
+			Phase:                   string(kscribev1alpha1.DiagnosisPhaseFailed),
+			StartedAt:               &now,
+			CompletedAt:             &completedAt,
+			TokensUsed:              outcome.TokensUsed,
 		})
 		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
 		// ponytail: patchStatus retries on conflict so the Failed phase always lands,
@@ -241,14 +281,19 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// ADR-003 step 4: SQLite write succeeded — now update CR to Done/Partial.
 	_ = r.Store.UpsertIncident(ctx, store.Incident{
-		Namespace:   kd.Namespace,
-		Name:        kd.Name,
-		EventUID:    kd.Spec.EventUID,
-		Phase:       string(outcome.Phase),
-		StartedAt:   &now,
-		CompletedAt: &completedAt,
-		TokensUsed:  outcome.TokensUsed,
-		Persisted:   true,
+		Namespace:               kd.Namespace,
+		Name:                    kd.Name,
+		EventUID:                kd.Spec.EventUID,
+		InvolvedObjectKind:      kd.Spec.InvolvedObjectKind,
+		InvolvedObjectName:      kd.Spec.InvolvedObjectName,
+		InvolvedObjectNamespace: kd.Spec.InvolvedObjectNamespace,
+		Reason:                  kd.Spec.Reason,
+		Message:                 kd.Spec.Message,
+		Phase:                   string(outcome.Phase),
+		StartedAt:               &now,
+		CompletedAt:             &completedAt,
+		TokensUsed:              outcome.TokensUsed,
+		Persisted:               true,
 	})
 
 	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="%s">%s</span>`, outcome.Phase, outcome.Phase))

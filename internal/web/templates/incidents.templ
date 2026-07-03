@@ -3,6 +3,8 @@ package templates
 import (
 	"fmt"
 	"net/url"
+	"strings"
+
 	"github.com/amjadjibon/kscribe/internal/store"
 )
 
@@ -76,8 +78,8 @@ templ IncidentList(incidents []store.Incident, totals map[string]int, page, last
 								{ inc.Namespace }/{ inc.Name }
 							</a>
 						</td>
-						<td style="font-family: var(--font-mono); font-size: var(--text-sm)">{ inc.InvolvedObjectKind }/{ inc.InvolvedObjectName }</td>
-						<td>{ inc.Reason }</td>
+							<td class={ "incident-object", missingValueClass(inc.InvolvedObjectKind, inc.InvolvedObjectName) }>{ incidentObjectLabel(inc) }</td>
+							<td class={ missingValueClass(inc.Reason) }>{ displayText(inc.Reason, "Not captured") }</td>
 						<td>@PhaseBadge(inc.Phase)</td>
 						<td style="color: var(--c-text-muted); font-size: var(--text-sm)">{ inc.UpdatedAt.Format("2006-01-02 15:04") }</td>
 					</tr>
@@ -100,63 +102,58 @@ templ IncidentList(incidents []store.Incident, totals map[string]int, page, last
 	}
 }
 
-// IncidentDetail renders the full incident detail page with tabbed layout.
+// IncidentDetail renders the incident detail page with tabs and a persistent chat sidebar.
 // CON-005: tabs use Alpine x-show (not x-if) so the SSE block stays in the DOM.
 templ IncidentDetail(d *IncidentDetailView) {
-	<div x-data="{ tab: 'overview' }">
-		<div class="detail-header">
-			<h2>
-				{ d.Namespace }/{ d.Name }
-				@PhaseBadge(d.Phase)
-			</h2>
-		</div>
-		<div class="tab-bar" role="tablist">
-			<button
-				class="tab-button"
-				:class="{ 'tab-button-active': tab === 'overview' }"
-				@click="tab='overview'"
-				role="tab"
-			>Overview</button>
-			<button
-				class="tab-button"
-				:class="{ 'tab-button-active': tab === 'rca' }"
-				@click="tab='rca'"
-				role="tab"
-			>RCA</button>
-			<button
-				class="tab-button"
-				:class="{ 'tab-button-active': tab === 'context' }"
-				@click="tab='context'"
-				role="tab"
-			>Context</button>
-			<button
-				class="tab-button"
-				:class="{ 'tab-button-active': tab === 'reasoning' }"
-				@click="tab='reasoning'"
-				role="tab"
-			>Reasoning</button>
-			<button
-				class="tab-button"
-				:class="{ 'tab-button-active': tab === 'raw' }"
-				@click="tab='raw'"
-				role="tab"
-			>Raw</button>
-			<button
-				class="tab-button"
-				:class="{ 'tab-button-active': tab === 'chat' }"
-				@click="tab='chat'"
-				role="tab"
-			>Chat</button>
-		</div>
+	<div class="detail-shell" x-data="{ tab: 'overview', chatOpen: true }" :class="{ 'chat-collapsed': !chatOpen }">
+		<main class="detail-main">
+			<div class="detail-header">
+				<h2>
+					{ d.Namespace }/{ d.Name }
+					@PhaseBadge(d.Phase)
+				</h2>
+			</div>
+			<div class="tab-bar" role="tablist">
+				<button
+					class="tab-button"
+					:class="{ 'tab-button-active': tab === 'overview' }"
+					@click="tab='overview'"
+					role="tab"
+				>Overview</button>
+				<button
+					class="tab-button"
+					:class="{ 'tab-button-active': tab === 'rca' }"
+					@click="tab='rca'"
+					role="tab"
+				>RCA</button>
+				<button
+					class="tab-button"
+					:class="{ 'tab-button-active': tab === 'context' }"
+					@click="tab='context'"
+					role="tab"
+				>Context</button>
+				<button
+					class="tab-button"
+					:class="{ 'tab-button-active': tab === 'reasoning' }"
+					@click="tab='reasoning'"
+					role="tab"
+				>Reasoning</button>
+				<button
+					class="tab-button"
+					:class="{ 'tab-button-active': tab === 'raw' }"
+					@click="tab='raw'"
+					role="tab"
+				>Raw</button>
+			</div>
 		<!-- Overview tab: event info + SSE live status.
 		     x-show keeps this in the DOM so the SSE stream is not interrupted. -->
 		<div x-show="tab === 'overview'">
 			<section>
 				<h3>Event</h3>
 				<dl>
-					<dt>Object</dt><dd>{ d.InvolvedObjectKind }/{ d.InvolvedObjectName } ({ d.InvolvedObjectNamespace })</dd>
-					<dt>Reason</dt><dd>{ d.Reason }</dd>
-					<dt>Message</dt><dd>{ d.Message }</dd>
+					<dt>Object</dt><dd class={ missingValueClass(d.InvolvedObjectKind, d.InvolvedObjectName) }>{ incidentObjectLabel(d.Incident) }</dd>
+					<dt>Reason</dt><dd class={ missingValueClass(d.Reason) }>{ displayText(d.Reason, "Not captured") }</dd>
+					<dt>Message</dt><dd class={ missingValueClass(d.Message) }>{ displayText(d.Message, "Not captured") }</dd>
 					if d.StartedAt != nil {
 						<dt>Started</dt><dd>{ d.StartedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
 					}
@@ -222,60 +219,6 @@ templ IncidentDetail(d *IncidentDetailView) {
 				</div>
 			}
 		</div>
-		<!-- Chat tab: history + live SSE streaming + input form.
-		     x-show keeps SSE region mounted (CON-005). SEC-001: assistant content via RenderMarkdown. -->
-		<div x-show="tab === 'chat'">
-			<div class="chat-panel">
-				<!-- Stored history -->
-				<div class="chat-messages" id="chat-messages">
-					if len(d.ChatMessages) == 0 {
-						<div class="chat-empty">No messages yet. Ask a question below.</div>
-					} else {
-						for _, msg := range d.ChatMessages {
-							if msg.Role == "user" {
-								<div class="chat-bubble chat-bubble-user">{ msg.Content }</div>
-							} else {
-								<div class="chat-bubble chat-bubble-assistant markdown">@RenderMarkdown(msg.Content)</div>
-							}
-						}
-					}
-				</div>
-				<!-- Live streaming bubble: SSE coalesced assistant text swapped in (SEC-002: already escaped server-side). -->
-				<div
-					hx-ext="sse"
-					sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat/stream" }
-					sse-swap="message"
-					hx-swap="innerHTML"
-					id="chat-stream"
-					class="chat-bubble chat-bubble-assistant chat-streaming"
-				></div>
-				<!-- Input form: Alpine scoped to this div only. -->
-				<div class="chat-input-area" x-data="{ draft: '', pending: [] }">
-					<div class="chat-pending">
-						<template x-for="(m, i) in pending" :key="i">
-							<div class="chat-bubble chat-bubble-user" x-text="m"></div>
-						</template>
-					</div>
-					<form
-						class="chat-form"
-						hx-post={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat" }
-						hx-swap="none"
-						@submit="pending.push(draft)"
-						hx-on--after-request="draft = ''"
-					>
-						<input
-							type="text"
-							name="message"
-							x-model="draft"
-							placeholder="Ask about this incident…"
-							class="chat-input"
-							autocomplete="off"
-						/>
-						<button type="submit" class="chat-send">Send</button>
-					</form>
-				</div>
-			</div>
-		</div>
 		<!-- Raw tab: plain key/value dump of event + LLM fields. -->
 		<div x-show="tab === 'raw'">
 			<section>
@@ -284,9 +227,9 @@ templ IncidentDetail(d *IncidentDetailView) {
 					<dt>Namespace</dt><dd>{ d.Namespace }</dd>
 					<dt>Name</dt><dd>{ d.Name }</dd>
 					<dt>Phase</dt><dd>{ d.Phase }</dd>
-					<dt>Involved Object</dt><dd>{ d.InvolvedObjectKind }/{ d.InvolvedObjectName } ({ d.InvolvedObjectNamespace })</dd>
-					<dt>Reason</dt><dd>{ d.Reason }</dd>
-					<dt>Message</dt><dd>{ d.Message }</dd>
+					<dt>Involved Object</dt><dd class={ missingValueClass(d.InvolvedObjectKind, d.InvolvedObjectName) }>{ incidentObjectLabel(d.Incident) }</dd>
+					<dt>Reason</dt><dd class={ missingValueClass(d.Reason) }>{ displayText(d.Reason, "Not captured") }</dd>
+					<dt>Message</dt><dd class={ missingValueClass(d.Message) }>{ displayText(d.Message, "Not captured") }</dd>
 					<dt>LLM Provider</dt><dd>{ d.LLMProvider }</dd>
 					<dt>LLM Model</dt><dd>{ d.LLMModel }</dd>
 					<dt>Tokens Used</dt><dd>{ fmt.Sprintf("%d", d.TokensUsed) }</dd>
@@ -300,8 +243,82 @@ templ IncidentDetail(d *IncidentDetailView) {
 					<dt>Updated At</dt><dd>{ d.UpdatedAt.Format("2006-01-02 15:04:05 UTC") }</dd>
 				</dl>
 			</section>
-		</div>
+			</div>
+		</main>
+		<aside class="detail-sidebar" :class="{ 'detail-sidebar-collapsed': !chatOpen }" aria-label="Incident chat">
+			@ChatPanel(d)
+		</aside>
 	</div>
+}
+
+// ChatPanel renders history + live SSE streaming + input form.
+// SEC-001: assistant content goes through RenderMarkdown.
+templ ChatPanel(d *IncidentDetailView) {
+	<section class="chat-panel">
+		<button class="chat-rail-button" type="button" x-show="!chatOpen" @click="chatOpen = true" aria-label="Open chat">Chat</button>
+		<header class="chat-header" x-show="chatOpen">
+			<div>
+				<h3>Chat</h3>
+				<p>kscribe Copilot</p>
+			</div>
+			<button class="chat-icon-button" type="button" @click="chatOpen = false" aria-label="Collapse chat" title="Collapse chat">&gt;</button>
+		</header>
+		<div class="chat-messages" id="chat-messages" x-show="chatOpen">
+			if len(d.ChatMessages) == 0 {
+				<div class="chat-empty">No messages yet. Ask a question below.</div>
+			} else {
+				for _, msg := range d.ChatMessages {
+					if msg.Role == "user" {
+						<div class="chat-message chat-message-user">
+							<div class="chat-message-label">You</div>
+							<div class="chat-bubble chat-bubble-user">{ msg.Content }</div>
+						</div>
+					} else {
+						<div class="chat-message chat-message-assistant">
+							<div class="chat-message-label">kscribe</div>
+							<div class="chat-bubble chat-bubble-assistant markdown">@RenderMarkdown(msg.Content)</div>
+						</div>
+					}
+				}
+			}
+		</div>
+		<div
+			hx-ext="sse"
+			sse-connect={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat/stream" }
+			sse-swap="message"
+			hx-swap="innerHTML"
+			id="chat-stream"
+			class="chat-bubble chat-bubble-assistant chat-streaming markdown"
+			x-show="chatOpen"
+		></div>
+		<div class="chat-input-area" x-data="{ draft: '', pending: [] }" x-show="chatOpen">
+			<div class="chat-pending">
+				<template x-for="(m, i) in pending" :key="i">
+					<div class="chat-message chat-message-user">
+						<div class="chat-message-label">You</div>
+						<div class="chat-bubble chat-bubble-user" x-text="m"></div>
+					</div>
+				</template>
+			</div>
+			<form
+				class="chat-form"
+				hx-post={ "/incidents/" + d.Namespace + "/" + d.Name + "/chat" }
+				hx-swap="none"
+				@submit="if (draft.trim() === '') { $event.preventDefault() } else { pending.push(draft) }"
+				hx-on--after-request="draft = ''; pending = []"
+			>
+				<input
+					type="text"
+					name="message"
+					x-model="draft"
+					placeholder="Ask about this incident…"
+					class="chat-input"
+					autocomplete="off"
+				/>
+				<button type="submit" class="chat-send" aria-label="Send message" title="Send message">↑</button>
+			</form>
+		</div>
+	</section>
 }
 
 // DiagnosisContextBlock renders the decoded snapshot for one diagnosis.
@@ -543,4 +560,38 @@ func statCardActiveClass(phase, activePhase string) string {
 		return "stat-card-active"
 	}
 	return ""
+}
+
+func incidentObjectLabel(inc store.Incident) string {
+	kind := strings.TrimSpace(inc.InvolvedObjectKind)
+	name := strings.TrimSpace(inc.InvolvedObjectName)
+	ns := strings.TrimSpace(inc.InvolvedObjectNamespace)
+	switch {
+	case kind != "" && name != "" && ns != "":
+		return fmt.Sprintf("%s/%s (%s)", kind, name, ns)
+	case kind != "" && name != "":
+		return kind + "/" + name
+	case name != "":
+		return name
+	case kind != "":
+		return kind
+	default:
+		return "Not captured"
+	}
+}
+
+func displayText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func missingValueClass(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return ""
+		}
+	}
+	return "muted-value"
 }
