@@ -1,6 +1,6 @@
 ---
 goal: Make kscribe production ready — retention, metrics, auth, cost caps
-version: 1.1
+version: 1.2
 date_created: 2026-07-03
 last_updated: 2026-07-03
 owner: amjadjibon
@@ -12,7 +12,7 @@ tags: [feature, architecture]
 
 ![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
 
-kscribe works end to end but has four gaps that bite in a real cluster: unbounded SQLite/CR growth, no operational metrics, an unauthenticated dashboard, and no cap on LLM spend during event storms. This plan closes them in four independent phases, each shipping a Helm-configurable knob.
+kscribe works end to end but has gaps that bite in a real cluster: unbounded SQLite/CR growth, no operational metrics, an unauthenticated dashboard, no cap on LLM spend during event storms, and a nonessential JSON dependency (sonic). This plan closes them in five phases; each operational phase ships a Helm-configurable knob.
 
 ## 1. Requirements & Constraints
 
@@ -36,8 +36,8 @@ kscribe works end to end but has four gaps that bite in a real cluster: unbounde
 **Goal**: Stop unbounded growth of the SQLite DB and finished KscribeDiagnosis CRs — the only slow-motion outage in the current code. First because it's the highest-risk gap and has no dependencies.
 
 - [ ] TASK-001: Add `RetentionPeriod time.Duration` to `internal/config/config.go` (`KSCRIBE_RETENTION_PERIOD`, default `720h`; `0` disables pruning).
-- [ ] TASK-002: Add `(*Store).Prune(ctx, olderThan time.Time) (int64, error)` in `internal/store/sqlite.go` — delete incidents with `last_seen < olderThan`, plus their diagnoses and chat rows (respect existing FK/cascade behaviour; check `internal/store/migrations/*.sql` and add `ON DELETE CASCADE` via a new migration only if not already present).
-- [ ] TASK-003: Add a pruner runnable in `cmd/kscribe/main.go` via `mgr.Add(ctrlmgr.RunnableFunc(...))` — ticker loop (1h interval) calling `st.Prune` and deleting KscribeDiagnosis CRs whose phase is terminal (Completed/Failed) and older than the retention window, using `mgr.GetClient()`.
+- [ ] TASK-002: Add `(*Store).Prune(ctx, olderThan time.Time) (int64, error)` in `internal/store/sqlite.go` — one transaction, three explicit DELETEs keyed on (namespace, name): `chat_messages` (no FK at all), `diagnoses` (FK but no cascade), then `incidents` with `updated_at < olderThan`. `updated_at` is indexed (`idx_incidents_updated_at`) and stored as a SQLite `datetime('now')` string — format the cutoff the same way (see `fmtTimePtr` in `sqlite.go`). No migration needed.
+- [ ] TASK-003: Add a pruner runnable in `cmd/kscribe/main.go` via `mgr.Add(ctrlmgr.RunnableFunc(...))` — ticker loop (1h interval) calling `st.Prune` and deleting KscribeDiagnosis CRs whose phase is terminal (`Done`, `Partial`, or `Failed` — `Partial` counts as terminal) and older than the retention window, using `mgr.GetClient()`.
 - [ ] TASK-004: Expose `retentionPeriod` in `charts/kscribe/values.yaml` → env in `charts/kscribe/templates/deployment.yaml`; regenerate `deploy/kscribe.yaml` with `scripts/build-manifest.sh`.
 
 **Completion criteria**: `go test ./internal/store/...` passes including a new `TestPrune` that inserts an old and a new incident and asserts only the old one (and its diagnoses/chat rows) is deleted; `helm template charts/kscribe --set retentionPeriod=168h` renders `KSCRIBE_RETENTION_PERIOD=168h`.
@@ -60,16 +60,20 @@ Tasks:
   (env KSCRIBE_RETENTION_PERIOD, envDefault "720h"; 0 disables pruning).
   Follow the existing caarlos0/env struct-tag style in that file.
 - TASK-002: Add (*Store).Prune(ctx context.Context, olderThan time.Time)
-  (int64, error) in internal/store/sqlite.go deleting incidents with
-  last_seen < olderThan plus their diagnoses and chat rows. Check the
-  schema in internal/store/migrations/*.sql first; if child tables lack
-  ON DELETE CASCADE, either delete children explicitly in one transaction
-  or add a new numbered migration.
+  (int64, error) in internal/store/sqlite.go: one transaction, three
+  explicit DELETEs keyed on (namespace, name) — chat_messages (has no FK),
+  diagnoses (FK without cascade), then incidents with
+  updated_at < olderThan. updated_at is indexed
+  (idx_incidents_updated_at) and stored as a SQLite datetime('now')
+  string, so format the cutoff identically (see fmtTimePtr/parseTime in
+  sqlite.go). No new migration.
 - TASK-003: In cmd/kscribe/main.go, add a pruner via
   mgr.Add(ctrlmgr.RunnableFunc(...)): hourly ticker; skip entirely when
   RetentionPeriod == 0; call st.Prune and also list+delete KscribeDiagnosis
-  CRs (api/v1alpha1) in a terminal phase (Completed/Failed) older than the
-  window using mgr.GetClient(). Log counts at Info level.
+  CRs (api/v1alpha1) in a terminal phase — the enum in
+  kscribediagnosis_types.go is Pending|Diagnosing|Done|Partial|Failed;
+  terminal means Done, Partial, or Failed — older than the window,
+  using mgr.GetClient(). Log counts at Info level.
 - TASK-004: Add retentionPeriod to charts/kscribe/values.yaml (default
   "720h") and wire it as the env var in
   charts/kscribe/templates/deployment.yaml; then run
@@ -105,7 +109,7 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 - [ ] TASK-005: Re-enable the controller-runtime metrics server in `cmd/kscribe/main.go`: replace `BindAddress: "0"` with a configurable `KSCRIBE_METRICS_ADDR` (default `:8081`) from `internal/config/config.go`.
 - [ ] TASK-006: Create `internal/metrics/metrics.go` registering on `sigs.k8s.io/controller-runtime/pkg/metrics.Registry`: `kscribe_diagnoses_total{outcome}` (counter), `kscribe_llm_tokens_total{provider,model}` (counter), `kscribe_llm_request_seconds{provider}` (histogram).
-- [ ] TASK-007: Increment counters in `internal/controller/kscribediagnosis_controller.go` where a diagnosis reaches Completed/Failed and where token usage is recorded; time the provider call in `internal/agent/diagnosis_agent.go` (or wrap in the reconciler if the agent shouldn't import metrics).
+- [ ] TASK-007: Increment counters in `internal/controller/kscribediagnosis_controller.go` where a diagnosis reaches a terminal phase (`Done`, `Partial`, or `Failed` — outcome label values `done|partial|failed`) and where token usage is recorded; time the provider call in `internal/agent/diagnosis_agent.go` (or wrap in the reconciler if the agent shouldn't import metrics).
 - [ ] TASK-008: Expose metrics port in `charts/kscribe/templates/deployment.yaml` + `service.yaml`; regenerate `deploy/kscribe.yaml`.
 
 **Completion criteria**: With the operator running locally (`scripts/local-test.sh` or `go run ./cmd/kscribe` against a kind cluster), `curl -s localhost:8081/metrics | grep kscribe_` shows all three metric families; `go test ./...` passes.
@@ -131,12 +135,14 @@ Tasks:
 - TASK-006: New package internal/metrics with vars registered on
   sigs.k8s.io/controller-runtime/pkg/metrics.Registry (prometheus client
   is already a transitive dep — add no new module requirements):
-  kscribe_diagnoses_total counter with label outcome (completed|failed),
+  kscribe_diagnoses_total counter with label outcome (done|partial|failed
+  — matching the DiagnosisPhase enum in api/v1alpha1),
   kscribe_llm_tokens_total counter with labels provider, model,
   kscribe_llm_request_seconds histogram with label provider.
 - TASK-007: Instrument internal/controller/kscribediagnosis_controller.go:
-  increment kscribe_diagnoses_total when the CR transitions to
-  Completed/Failed; add token usage where TokensUsed lands in status.
+  increment kscribe_diagnoses_total when the CR transitions to a terminal
+  phase (Done, Partial, or Failed); add token usage where TokensUsed
+  lands in status.
   Time each provider round-trip for the histogram — prefer instrumenting
   in the reconciler or a thin wrapper so internal/agent stays free of
   metrics imports.
@@ -172,7 +178,7 @@ Do NOT push, open PRs, or modify PLAN.md.
 **Depends on**: Phase 2 complete
 
 - [ ] TASK-009: Add `DashboardToken string` to `internal/config/config.go` (`KSCRIBE_DASHBOARD_TOKEN`, default empty = auth disabled).
-- [ ] TASK-010: In `internal/web/server.go`, wrap `Handler()` routes (all except `/healthz`) with a check for `Authorization: Bearer <token>` OR a `kscribe_token` cookie, using `subtle.ConstantTimeCompare`. On failure: 401 for API/SSE paths. Add `GET/POST /login` (simple templ form) that sets the cookie so the HTMX dashboard stays usable in a browser.
+- [ ] TASK-010: In `internal/web/server.go`, add chi middleware (`r.Use`) in `Handler()` — the router is `github.com/go-chi/chi/v5` — checking `Authorization: Bearer <token>` OR a `kscribe_token` cookie via `subtle.ConstantTimeCompare`; mount `/healthz` and `/login` outside the middleware group. On failure: 401 for API/SSE paths. Add `GET/POST /login` (simple templ form) that sets the cookie so the HTMX dashboard stays usable in a browser.
 - [ ] TASK-011: Plumb the token into `web.New` from `cmd/kscribe/main.go`.
 - [ ] TASK-012: Add `dashboard.token` / `dashboard.existingSecret` support in `charts/kscribe` (env from Secret, matching the existing `kscribe-llm` secret pattern in `templates/secret.yaml`); regenerate `deploy/kscribe.yaml`.
 
@@ -191,9 +197,11 @@ Branch: production-ready/phase-3  |  Base: production-ready/phase-2
 Tasks:
 - TASK-009: Add DashboardToken string to internal/config/config.go
   (env KSCRIBE_DASHBOARD_TOKEN, envDefault ""; empty disables auth).
-- TASK-010: In internal/web/server.go, add auth middleware around the mux
-  in Handler(): skip when the configured token is empty; always allow
-  /healthz. Accept Authorization: Bearer <token> or cookie
+- TASK-010: In internal/web/server.go, add auth middleware via chi's
+  r.Use in Handler() (the router is github.com/go-chi/chi/v5 — use a
+  r.Group for protected routes): skip when the configured token is empty;
+  mount /healthz and /login outside the group.
+  Accept Authorization: Bearer <token> or cookie
   kscribe_token=<token>; compare with crypto/subtle.ConstantTimeCompare.
   Unauthenticated browser requests to HTML pages redirect to /login
   (GET shows a minimal form — follow the existing templ component style in
@@ -210,7 +218,7 @@ Tasks:
   to regenerate deploy/kscribe.yaml.
 
 Key files:
-- internal/web/server.go — Handler() builds the mux; healthz at /healthz
+- internal/web/server.go — Handler() builds the chi router; healthz at /healthz
 - internal/web/server_test.go — existing test style (httptest)
 - internal/web/templates/ — templ components (run `templ generate` if you
   add a .templ file; check Makefile for the target)
@@ -369,11 +377,11 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 ## 4. Risks & Assumptions
 
-- **RISK-001**: Deleting KscribeDiagnosis CRs could race an in-flight reconcile — mitigation: pruner only deletes terminal phases (Completed/Failed) older than the retention window.
-- **RISK-002**: SQLite migrations are embedded and numbered; a cascade-delete migration must not break existing DBs — mitigation: prefer explicit child deletes in a transaction over schema change.
+- **RISK-001**: Deleting KscribeDiagnosis CRs could race an in-flight reconcile — mitigation: pruner only deletes terminal phases (`Done`, `Partial`, `Failed`) older than the retention window.
+- **RISK-002**: Neither `diagnoses` (FK, no cascade) nor `chat_messages` (no FK) cascade on incident delete — mitigation: `Prune` does three explicit DELETEs in one transaction; no schema change.
 - **RISK-003**: Cookie auth on SSE endpoints — HTMX SSE sends cookies automatically, bearer does not; mitigation: middleware accepts either, tests cover the SSE path.
 - **ASSUMPTION-001**: Prometheus client is available transitively via controller-runtime; no new go.mod requirement needed.
-- **ASSUMPTION-002**: `last_seen` (or equivalent timestamp column) exists on incidents for retention cutoff; if it's named differently the Phase 1 agent adapts to the actual schema in `migrations/0001_init.sql`.
+- **ASSUMPTION-002**: Retention cutoff uses `incidents.updated_at` (verified in `migrations/0001_init.sql`; indexed, stored as `datetime('now')` TEXT).
 - **ASSUMPTION-003**: Single replica (matches existing CON-006 comments), so an in-process rate limiter and per-replica pruner are sufficient.
 - **ASSUMPTION-004**: Webhook/Slack notifications were deliberately excluded — they're a feature, not production readiness; add as a separate plan if wanted.
 - **RISK-004**: sonic and encoding/json differ on edge cases (HTML escaping defaults, number precision, map key ordering) — mitigation: existing round-trip tests must pass unchanged (TEST-006); the SSE chunk parser in `internal/agent/openai.go` keeps its skip-malformed-chunk behaviour.
