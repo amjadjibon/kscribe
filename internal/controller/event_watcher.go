@@ -113,10 +113,63 @@ func (r *eventWatcher) createDiagnosis(ctx context.Context, ev *corev1.Event, po
 	}
 	// Treat AlreadyExists as success: after a restart the Deduper is empty but the CR
 	// may already exist — returning an error here would cause an infinite backoff storm (HIGH-002).
-	if err := r.deps.Client.Create(ctx, ksd); err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
+	// If the existing CR came from an older controller or a partial create, fill missing
+	// event metadata so the dashboard can show Object and Reason after the CR mirrors to SQLite.
+	if err := r.deps.Client.Create(ctx, ksd); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+		return r.backfillExistingDiagnosis(ctx, ns, ksd.Name, ev, policy)
 	}
 	return nil
+}
+
+func (r *eventWatcher) backfillExistingDiagnosis(ctx context.Context, namespace, name string, ev *corev1.Event, policy ResolvedPolicy) error {
+	var existing kscribev1alpha1.KscribeDiagnosis
+	if err := r.deps.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &existing); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	changed := false
+	setString := func(field *string, value string) {
+		if *field == "" && value != "" {
+			*field = value
+			changed = true
+		}
+	}
+	setString(&existing.Spec.InvolvedObjectName, ev.InvolvedObject.Name)
+	setString(&existing.Spec.InvolvedObjectNamespace, ev.InvolvedObject.Namespace)
+	setString(&existing.Spec.InvolvedObjectKind, ev.InvolvedObject.Kind)
+	setString(&existing.Spec.Reason, ev.Reason)
+	setString(&existing.Spec.Message, ev.Message)
+	setString(&existing.Spec.EventUID, string(ev.UID))
+	setString(&existing.Spec.PolicyRef, policy.PolicyRef)
+	setString(&existing.Spec.LLMProvider, policy.LLMProvider)
+	setString(&existing.Spec.LLMModel, policy.LLMModel)
+	setString(&existing.Spec.LLMBaseURL, policy.LLMBaseURL)
+	if existing.Spec.Count == 0 && ev.Count != 0 {
+		existing.Spec.Count = ev.Count
+		changed = true
+	}
+	if existing.Spec.FirstTimestamp == nil && !ev.FirstTimestamp.IsZero() {
+		existing.Spec.FirstTimestamp = &ev.FirstTimestamp
+		changed = true
+	}
+	if existing.Spec.LastTimestamp == nil && !ev.LastTimestamp.IsZero() {
+		existing.Spec.LastTimestamp = &ev.LastTimestamp
+		changed = true
+	}
+	if existing.Spec.MaxIterations == nil && policy.MaxIterations != nil {
+		existing.Spec.MaxIterations = policy.MaxIterations
+		changed = true
+	}
+	if existing.Spec.Redact == nil && policy.Redact != nil {
+		existing.Spec.Redact = policy.Redact
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return r.deps.Client.Update(ctx, &existing)
 }
 
 // diagnosisName returns a stable, lowercase RFC-1123-safe name for the CR.

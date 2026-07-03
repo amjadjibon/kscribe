@@ -85,6 +85,18 @@ func TestReconcile_WithRealStore(t *testing.T) {
 	if inc.TokensUsed != 42 {
 		t.Errorf("incident TokensUsed = %d, want 42", inc.TokensUsed)
 	}
+	if inc.InvolvedObjectKind != "Pod" {
+		t.Errorf("incident InvolvedObjectKind = %q, want Pod", inc.InvolvedObjectKind)
+	}
+	if inc.InvolvedObjectName != "pod-1" {
+		t.Errorf("incident InvolvedObjectName = %q, want pod-1", inc.InvolvedObjectName)
+	}
+	if inc.InvolvedObjectNamespace != "default" {
+		t.Errorf("incident InvolvedObjectNamespace = %q, want default", inc.InvolvedObjectNamespace)
+	}
+	if inc.Reason != "BackOff" {
+		t.Errorf("incident Reason = %q, want BackOff", inc.Reason)
+	}
 	if !inc.Persisted {
 		t.Error("incident Persisted must be true")
 	}

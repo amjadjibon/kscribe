@@ -163,6 +163,53 @@ func TestAlreadyExistsIsSuccess(t *testing.T) {
 	}
 }
 
+func TestAlreadyExistsBackfillsMissingEventMetadata(t *testing.T) {
+	scheme := testScheme()
+	ev := makeEvent("uid-backfill", "default", corev1.EventTypeWarning, "BackOff")
+	ev.Message = "back-off from restarted watcher"
+	ev.Count = 3
+
+	existing := &kscribev1alpha1.KscribeDiagnosis{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      diagnosisName(ev),
+			Namespace: "kscribe-system",
+		},
+		Status: kscribev1alpha1.KscribeDiagnosisStatus{Phase: kscribev1alpha1.DiagnosisPhasePending},
+	}
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&kscribev1alpha1.KscribeDiagnosis{}).
+		WithObjects(existing).
+		Build()
+	w := buildWatcher(cl, NewDeduper(time.Hour), testCfg())
+
+	if err := w.processEvent(context.Background(), ev); err != nil {
+		t.Fatalf("processEvent: %v", err)
+	}
+
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: diagnosisName(ev), Namespace: "kscribe-system"}, &got); err != nil {
+		t.Fatalf("get diagnosis: %v", err)
+	}
+	for _, c := range []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"Reason", got.Spec.Reason, "BackOff"},
+		{"InvolvedObjectKind", got.Spec.InvolvedObjectKind, "Pod"},
+		{"InvolvedObjectName", got.Spec.InvolvedObjectName, "my-pod"},
+		{"InvolvedObjectNamespace", got.Spec.InvolvedObjectNamespace, "default"},
+		{"EventUID", got.Spec.EventUID, "uid-backfill"},
+		{"Count", got.Spec.Count, int32(3)},
+		{"Message", got.Spec.Message, "back-off from restarted watcher"},
+	} {
+		if fmt.Sprint(c.got) != fmt.Sprint(c.want) {
+			t.Errorf("%s = %v, want %v", c.field, c.got, c.want)
+		}
+	}
+}
+
 // (e) accepted Warning event creates exactly one KscribeDiagnosis with the right spec fields.
 func TestAcceptedWarningCreatesDiagnosis(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(testScheme()).Build()
