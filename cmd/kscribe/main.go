@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -66,34 +65,10 @@ func runPruner(ctx context.Context, st *store.Store, c client.Client, retention 
 			slog.Info("pruned sqlite history", "incidents_deleted", n, "cutoff", cutoff.UTC().Format(time.RFC3339))
 		}
 
-		var list kscribev1alpha1.KscribeDiagnosisList
-		if err := c.List(ctx, &list); err != nil {
-			slog.Error("prune list diagnoses", "error", err)
-		} else {
-			deleted := 0
-			for i := range list.Items {
-				d := &list.Items[i]
-				switch d.Status.Phase {
-				case kscribev1alpha1.DiagnosisPhaseDone, kscribev1alpha1.DiagnosisPhasePartial, kscribev1alpha1.DiagnosisPhaseFailed:
-				default:
-					continue // only terminal phases are pruned
-				}
-				finished := d.CreationTimestamp.Time
-				if d.Status.CompletedAt != nil {
-					finished = d.Status.CompletedAt.Time
-				}
-				if finished.After(cutoff) {
-					continue
-				}
-				if err := c.Delete(ctx, d); err != nil && !apierrors.IsNotFound(err) {
-					slog.Error("prune delete diagnosis", "namespace", d.Namespace, "name", d.Name, "error", err)
-					continue
-				}
-				deleted++
-			}
-			if deleted > 0 {
-				slog.Info("pruned finished diagnosis CRs", "deleted", deleted)
-			}
+		if deleted, err := controller.PruneDiagnosisCRs(ctx, c, cutoff); err != nil {
+			slog.Error("prune diagnosis CRs", "error", err)
+		} else if deleted > 0 {
+			slog.Info("pruned finished diagnosis CRs", "deleted", deleted)
 		}
 
 		select {
