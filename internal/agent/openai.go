@@ -10,6 +10,10 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 // streamChunk is the minimal SSE payload shape for streaming chat completions.
@@ -48,45 +52,122 @@ func NewOpenAIClient(baseURL, apiKey, model string) *OpenAIClient {
 	}
 }
 
-// Complete sends a chat-completions request and returns the parsed response.
-func (c *OpenAIClient) Complete(ctx context.Context, req Request) (Response, error) {
-	req.Model = c.Model
-	body, err := sonic.Marshal(req)
-	if err != nil {
-		return Response{}, fmt.Errorf("marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return Response{}, fmt.Errorf("build http request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
+// sdkClient assembles an openai-go client from the struct fields. WithBaseURL
+// normalizes a non-slash-terminated path (so a Gemini-style
+// .../v1beta/openai base still POSTs to .../v1beta/openai/chat/completions).
+func (c *OpenAIClient) sdkClient() openai.Client {
+	opts := []option.RequestOption{option.WithBaseURL(c.BaseURL)}
 	if c.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+		opts = append(opts, option.WithAPIKey(c.APIKey))
+	}
+	if c.HTTPClient != nil {
+		opts = append(opts, option.WithHTTPClient(c.HTTPClient))
+	}
+	return openai.NewClient(opts...)
+}
+
+// Complete sends a chat-completions request via the official openai-go SDK and
+// returns the parsed response mapped back into our provider-neutral schema.
+func (c *OpenAIClient) Complete(ctx context.Context, req Request) (Response, error) {
+	params := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(c.Model),
+		Messages: toSDKMessages(req.Messages),
+	}
+	if len(req.Tools) > 0 {
+		params.Tools = toSDKTools(req.Tools)
 	}
 
-	resp, err := c.HTTPClient.Do(httpReq)
+	client := c.sdkClient()
+	resp, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return Response{}, fmt.Errorf("http: %w", err)
+		return Response{}, truncErr(err)
 	}
-	defer resp.Body.Close()
+	return fromSDKResponse(resp), nil
+}
 
-	if resp.StatusCode >= 300 {
-		// Truncate to 512 bytes so raw provider detail is not embedded in durable CR status / SQLite.
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return Response{}, fmt.Errorf("provider error %d: %s", resp.StatusCode, b)
+// truncErr caps the provider error string at 512 bytes so raw provider detail
+// (which may include request URLs / payload echoes) is not embedded in durable
+// CR status or SQLite. SEC-001.
+func truncErr(err error) error {
+	s := err.Error()
+	if len(s) > 512 {
+		s = s[:512]
 	}
+	return fmt.Errorf("provider error: %s", s)
+}
 
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return Response{}, fmt.Errorf("read response body: %w", err)
+// toSDKMessages maps our provider-neutral messages onto the SDK param unions.
+// Assistant messages carrying tool_calls use the explicit param struct (not the
+// openai.AssistantMessage string helper), which cannot represent tool_calls.
+func toSDKMessages(msgs []Message) []openai.ChatCompletionMessageParamUnion {
+	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(msgs))
+	for _, m := range msgs {
+		switch m.Role {
+		case "system":
+			out = append(out, openai.SystemMessage(m.Content))
+		case "developer":
+			out = append(out, openai.DeveloperMessage(m.Content))
+		case "tool":
+			out = append(out, openai.ToolMessage(m.Content, m.ToolCallID))
+		case "assistant":
+			if len(m.ToolCalls) == 0 {
+				out = append(out, openai.AssistantMessage(m.Content))
+				break
+			}
+			asst := openai.ChatCompletionAssistantMessageParam{}
+			if m.Content != "" {
+				asst.Content.OfString = param.NewOpt(m.Content)
+			}
+			for _, tc := range m.ToolCalls {
+				asst.ToolCalls = append(asst.ToolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+					OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+						ID: tc.ID,
+						Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+							Name:      tc.Function.Name,
+							Arguments: tc.Function.Arguments,
+						},
+					},
+				})
+			}
+			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &asst})
+		default: // user and anything unexpected
+			out = append(out, openai.UserMessage(m.Content))
+		}
 	}
-	var out Response
-	if err := sonic.Unmarshal(b, &out); err != nil {
-		return Response{}, fmt.Errorf("unmarshal response: %w", err)
+	return out
+}
+
+// toSDKTools maps our tool definitions onto the SDK's function-tool params.
+func toSDKTools(tools []ToolDefinition) []openai.ChatCompletionToolUnionParam {
+	out := make([]openai.ChatCompletionToolUnionParam, 0, len(tools))
+	for _, t := range tools {
+		fn := shared.FunctionDefinitionParam{Name: t.Function.Name}
+		if t.Function.Description != "" {
+			fn.Description = param.NewOpt(t.Function.Description)
+		}
+		if p, ok := t.Function.Parameters.(map[string]any); ok {
+			fn.Parameters = p
+		}
+		out = append(out, openai.ChatCompletionFunctionTool(fn))
 	}
-	return out, nil
+	return out
+}
+
+// fromSDKResponse maps the SDK response back into our schema.
+func fromSDKResponse(resp *openai.ChatCompletion) Response {
+	out := Response{Usage: Usage{TotalTokens: int(resp.Usage.TotalTokens)}}
+	for _, ch := range resp.Choices {
+		msg := Message{Role: "assistant", Content: ch.Message.Content}
+		for _, tc := range ch.Message.ToolCalls {
+			msg.ToolCalls = append(msg.ToolCalls, ToolCall{
+				ID:       tc.ID,
+				Type:     "function",
+				Function: FunctionCall{Name: tc.Function.Name, Arguments: tc.Function.Arguments},
+			})
+		}
+		out.Choices = append(out.Choices, Choice{Message: msg, FinishReason: ch.FinishReason})
+	}
+	return out
 }
 
 // CompleteStream sends a streaming chat-completions request and calls onDelta
