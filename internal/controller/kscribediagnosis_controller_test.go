@@ -705,3 +705,62 @@ func TestReconcile_RateLimited(t *testing.T) {
 		t.Fatalf("want Diagnosed condition with reason RateLimited, got %q", reason)
 	}
 }
+
+// fakeNotifier records notifications and signals via channel (send is async).
+type fakeNotifier struct {
+	err   error
+	calls chan [2]string // subject, html
+}
+
+func (f *fakeNotifier) Notify(_ context.Context, subject, html string) error {
+	f.calls <- [2]string{subject, html}
+	return f.err
+}
+
+// TestReconcile_NotifiesOnTerminal asserts a successful diagnosis fires exactly
+// one notification containing the RCA summary, and that a notifier error does
+// not fail the reconcile.
+func TestReconcile_NotifiesOnTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		notifyErr error
+	}{
+		{"success", nil},
+		{"notifier error swallowed", errors.New("smtp on fire")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := testScheme()
+			kd := newKD("diag-notify", "default")
+			fc := buildClient(scheme, kd).Build()
+
+			fn := &fakeNotifier{err: tc.notifyErr, calls: make(chan [2]string, 2)}
+			r := reconcilerFor(&fakeStore{}, goodProvider())
+			r.Client = fc
+			r.Notifier = fn
+
+			_, err := r.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "diag-notify", Namespace: "default"},
+			})
+			if err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+
+			select {
+			case call := <-fn.calls:
+				if !strings.Contains(call[0], "BackOff") {
+					t.Errorf("subject = %q, want reason BackOff", call[0])
+				}
+				if !strings.Contains(call[1], "test summary") {
+					t.Errorf("html missing RCA summary: %q", call[1])
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no notification within 2s")
+			}
+			select {
+			case extra := <-fn.calls:
+				t.Fatalf("unexpected second notification: %v", extra)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
+	}
+}

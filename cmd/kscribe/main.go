@@ -25,6 +25,7 @@ import (
 	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/config"
 	"github.com/amjadjibon/kscribe/internal/controller"
+	"github.com/amjadjibon/kscribe/internal/notify"
 	"github.com/amjadjibon/kscribe/internal/store"
 	"github.com/amjadjibon/kscribe/internal/web"
 )
@@ -211,6 +212,14 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				ToolExecutor:       &controller.KubeToolExecutor{Client: mgr.GetClient(), Kube: kcs},
 				RateLimiter:        controller.NewRateLimiter(cfg.MaxDiagnosesPerHour),
 				MaxPodsPerWorkload: cfg.MaxPodsPerWorkload,
+			}
+			if cfg.ResendAPIKey != "" && len(cfg.NotifyEmailTo) > 0 {
+				reconciler.Notifier = &notify.Resend{
+					APIKey: cfg.ResendAPIKey,
+					From:   cfg.NotifyEmailFrom,
+					To:     cfg.NotifyEmailTo,
+				}
+				slog.Info("email notifications enabled", "recipients", len(cfg.NotifyEmailTo))
 			}
 			if err := reconciler.SetupWithManager(mgr); err != nil {
 				return fmt.Errorf("setup diagnosis reconciler: %w", err)

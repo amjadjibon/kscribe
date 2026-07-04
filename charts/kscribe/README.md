@@ -42,6 +42,8 @@ key is optional at install time.
 | `dashboard.token` | `""` (auth off) | Static bearer token for the dashboard; creates a Secret |
 | `dashboard.existingSecret` | `""` | Use an existing Secret for the dashboard token instead |
 | `maxDiagnosesPerHour` | `30` | Global LLM cost cap; over-limit CRs stay Pending and retry; `0` = unlimited |
+| `notifications.resend.apiKey` | `""` (off) | Resend API key for email notifications; creates a Secret |
+| `notifications.to` / `notifications.from` | `[]` / `kscribe@notifications.local` | Recipients (required to enable) and sender |
 
 ## CRDs
 

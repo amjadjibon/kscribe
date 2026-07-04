@@ -65,6 +65,17 @@ type Config struct {
 	// targets a Deployment/ReplicaSet. Bounds context size and LLM cost.
 	MaxPodsPerWorkload int `env:"KSCRIBE_MAX_PODS_PER_WORKLOAD" envDefault:"3"`
 
+	// ResendAPIKey enables email notifications via the Resend API when set
+	// together with NotifyEmailTo. SEC-001: never logged.
+	ResendAPIKey string `env:"KSCRIBE_RESEND_API_KEY" envDefault:""`
+
+	// NotifyEmailFrom is the sender address for notification emails.
+	NotifyEmailFrom string `env:"KSCRIBE_NOTIFY_EMAIL_FROM" envDefault:"kscribe@notifications.local"`
+
+	// NotifyEmailTo is the recipient list for notification emails.
+	// Comma-separated in env form. Empty disables notifications.
+	NotifyEmailTo []string `env:"KSCRIBE_NOTIFY_EMAIL_TO" envSeparator:"," envDefault:""`
+
 	// ResyncPeriod is how often the controller re-syncs watched resources.
 	ResyncPeriod time.Duration `env:"KSCRIBE_RESYNC_PERIOD" envDefault:"10m"`
 }

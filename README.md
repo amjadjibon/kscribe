@@ -48,6 +48,7 @@ kscribe sends enriched, redacted cluster context (event messages, pod metadata, 
 | Metrics | `KSCRIBE_METRICS_ADDR` | `metrics.enabled` / `metrics.port` | `:9090` | Prometheus endpoint: `kscribe_diagnoses_total`, `kscribe_diagnoses_throttled_total`, `kscribe_llm_tokens_total`, `kscribe_llm_request_seconds`. `0` disables. |
 | Dashboard auth | `KSCRIBE_DASHBOARD_TOKEN` | `dashboard.token` / `dashboard.existingSecret` | off | Static bearer token (`Authorization: Bearer …` or login cookie). Use a high-entropy token (e.g. `openssl rand -hex 32`); failed logins are throttled to 10/min. `/healthz` stays open. |
 | LLM cost cap | `KSCRIBE_MAX_DIAGNOSES_PER_HOUR` | `maxDiagnosesPerHour` | `30` | Global cap on diagnosis starts per hour. Over-limit CRs stay `Pending` and retry with jitter — nothing is dropped. `0` = unlimited. |
+| Email notifications | `KSCRIBE_RESEND_API_KEY` / `KSCRIBE_NOTIFY_EMAIL_TO` | `notifications.resend.*` / `notifications.to` | off | Emails the RCA (summary, root cause, remediation) via [Resend](https://resend.com) on every finished diagnosis. Best-effort: failures are logged and counted (`kscribe_notifications_total`), never block reconciles. |
 
 ---
 
