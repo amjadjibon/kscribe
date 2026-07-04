@@ -4,13 +4,13 @@ version: 1.0
 date_created: 2026-07-04
 last_updated: 2026-07-04
 owner: amjadjibon
-status: 'Planned'
+status: 'Completed'
 tags: [feature]
 ---
 
 # Email Notifications (Resend)
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 When a diagnosis reaches a terminal phase (Done, Partial, Failed), kscribe emails the RCA summary via the Resend API so on-call engineers hear about incidents without watching the dashboard. Disabled unless an API key and recipients are configured.
 
@@ -33,10 +33,10 @@ When a diagnosis reaches a terminal phase (Done, Partial, Failed), kscribe email
 
 **Goal**: A tested, self-contained notify package plus the config knobs, with no wiring yet.
 
-- [ ] TASK-001: Create `internal/notify/resend.go`: `type Resend struct { APIKey, From string; To []string; BaseURL string; HTTPClient *http.Client }` with `Send(ctx, subject, html string) error` POSTing `{from, to, subject, html}` with `Authorization: Bearer`; non-2xx → error with status and ≤512 bytes of body (match `truncErr` hygiene in `internal/agent/openai.go`). `BaseURL` defaults to `https://api.resend.com`; overridable for tests.
-- [ ] TASK-002: Add `Incident` email rendering in `internal/notify/email.go`: `Subject(...)` (`[kscribe] <Phase>: <Reason> <ns>/<object>`) and `HTML(...)` building a minimal inline-styled body from phase, reason, object, summary, root cause, remediation steps. HTML-escape all fields (`html/template` or `html.EscapeString`).
-- [ ] TASK-003: Add to `internal/config/config.go`: `ResendAPIKey` (`KSCRIBE_RESEND_API_KEY`, default ""), `NotifyEmailFrom` (`KSCRIBE_NOTIFY_EMAIL_FROM`, default `kscribe@notifications.local`), `NotifyEmailTo` (`KSCRIBE_NOTIFY_EMAIL_TO`, comma-separated, default empty).
-- [ ] TASK-004: Tests `internal/notify/resend_test.go`: httptest server asserting auth header, JSON body, success, non-2xx error truncation; email rendering test asserting escaping of `<script>` in a summary.
+- [x] TASK-001: Create `internal/notify/resend.go`: `type Resend struct { APIKey, From string; To []string; BaseURL string; HTTPClient *http.Client }` with `Send(ctx, subject, html string) error` POSTing `{from, to, subject, html}` with `Authorization: Bearer`; non-2xx → error with status and ≤512 bytes of body (match `truncErr` hygiene in `internal/agent/openai.go`). `BaseURL` defaults to `https://api.resend.com`; overridable for tests.
+- [x] TASK-002: Add `Incident` email rendering in `internal/notify/email.go`: `Subject(...)` (`[kscribe] <Phase>: <Reason> <ns>/<object>`) and `HTML(...)` building a minimal inline-styled body from phase, reason, object, summary, root cause, remediation steps. HTML-escape all fields (`html/template` or `html.EscapeString`).
+- [x] TASK-003: Add to `internal/config/config.go`: `ResendAPIKey` (`KSCRIBE_RESEND_API_KEY`, default ""), `NotifyEmailFrom` (`KSCRIBE_NOTIFY_EMAIL_FROM`, default `kscribe@notifications.local`), `NotifyEmailTo` (`KSCRIBE_NOTIFY_EMAIL_TO`, comma-separated, default empty).
+- [x] TASK-004: Tests `internal/notify/resend_test.go`: httptest server asserting auth header, JSON body, success, non-2xx error truncation; email rendering test asserting escaping of `<script>` in a summary.
 
 **Completion criteria**: `go test ./internal/notify/` passes; `go build ./...` green; package has no non-stdlib imports.
 
@@ -98,10 +98,10 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 **Depends on**: Phase 1 complete
 
-- [ ] TASK-005: Add `Notifier` interface (`Notify(ctx, subject, html string) error`) + field on `KscribeDiagnosisReconciler` (nil = disabled), mirroring the `Publisher` pattern. In both terminal paths (Failed branch and Done/Partial success patch in `internal/controller/kscribediagnosis_controller.go`), fire the notification in a goroutine with its own timeout context (10s, detached from the reconcile ctx); log errors, increment `kscribe_notifications_total{status="sent"|"failed"}` (new counter in `internal/metrics/metrics.go`).
-- [ ] TASK-006: Wire in `cmd/kscribe/main.go`: when `cfg.ResendAPIKey != "" && len(cfg.NotifyEmailTo) > 0`, set the reconciler's Notifier to the notify.Resend client (log at Info that notifications are enabled, without the key).
-- [ ] TASK-007: Chart: `notifications.resend.apiKey` / `existingSecret` / `existingSecretKey` (Secret pattern like `kscribe-llm`), `notifications.from`, `notifications.to` (list, joined with `,` in the template). Env wiring in `templates/deployment.yaml` + secret in `templates/secret.yaml` + helpers; regenerate `deploy/kscribe.yaml`; add row to chart README values table and main README production table.
-- [ ] TASK-008: Reconciler test: fake Notifier records subject/html; terminal reconcile triggers exactly one notification containing the summary; notifier error does not fail the reconcile; nil Notifier is a no-op.
+- [x] TASK-005: Add `Notifier` interface (`Notify(ctx, subject, html string) error`) + field on `KscribeDiagnosisReconciler` (nil = disabled), mirroring the `Publisher` pattern. In both terminal paths (Failed branch and Done/Partial success patch in `internal/controller/kscribediagnosis_controller.go`), fire the notification in a goroutine with its own timeout context (10s, detached from the reconcile ctx); log errors, increment `kscribe_notifications_total{status="sent"|"failed"}` (new counter in `internal/metrics/metrics.go`).
+- [x] TASK-006: Wire in `cmd/kscribe/main.go`: when `cfg.ResendAPIKey != "" && len(cfg.NotifyEmailTo) > 0`, set the reconciler's Notifier to the notify.Resend client (log at Info that notifications are enabled, without the key).
+- [x] TASK-007: Chart: `notifications.resend.apiKey` / `existingSecret` / `existingSecretKey` (Secret pattern like `kscribe-llm`), `notifications.from`, `notifications.to` (list, joined with `,` in the template). Env wiring in `templates/deployment.yaml` + secret in `templates/secret.yaml` + helpers; regenerate `deploy/kscribe.yaml`; add row to chart README values table and main README production table.
+- [x] TASK-008: Reconciler test: fake Notifier records subject/html; terminal reconcile triggers exactly one notification containing the summary; notifier error does not fail the reconcile; nil Notifier is a no-op.
 
 **Completion criteria**: `go test ./...` passes; `helm template charts/kscribe --set notifications.resend.apiKey=x --set notifications.to={a@b.c}` renders `KSCRIBE_RESEND_API_KEY` from a Secret and `KSCRIBE_NOTIFY_EMAIL_TO=a@b.c`.
 
