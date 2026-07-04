@@ -57,7 +57,7 @@ blocking_ids: []
 - **MED-001 — fixed.** `incidentFromDiagnosis` now pins `UpdatedAt` to `Status.CompletedAt`; regression assertion added to `TestReconcile_MirrorsTerminalIncidentMetadata` (second-precision aware). Non-terminal mirrors (nil CompletedAt) keep the previous now-refresh behaviour, which is correct while a diagnosis is active.
 - **LOW-001 — fixed.** Prune comment now states the sub-second lexicographic caveat.
 - **LOW-002 — fixed.** `PruneDiagnosisCRs` joins per-CR delete errors; `runPruner` logs errors and the deleted count independently, so partial success is visible.
-- **LOW-003 — accepted.** Login brute-force throttling deferred; token is operator-chosen and comparison is constant-time. Documented here as the single remaining Low.
+- **LOW-003 — fixed in iteration 3.** Failed logins are throttled (10/min global sliding window → 429 with Retry-After); README documents high-entropy token guidance. `TestLoginThrottled` covers exhaustion including a correct-token attempt after lockout.
 
 No new findings in the delta. Full suite green (9/9 packages).
 
@@ -69,5 +69,27 @@ critical: 0
 high: 0
 medium: 0
 low: 1
+blocking_ids: []
+```
+
+---
+
+# Iteration 3 (user-requested fixes)
+
+- LOW-003 fixed: global failed-login sliding window (10/min) returning 429; ponytail-marked upgrade path to per-IP if ever exposed publicly. Test added.
+- Deprecated `ctrl.Result.Requeue` reference removed from controller test.
+- README gains a Production configuration table (retention, metrics, auth, cost cap).
+- Safari compat: `-webkit-user-select` added alongside `user-select` in app.css.
+
+Delta reviewed — no new findings. Full suite green.
+
+## Machine-Readable Verdict (iteration 3)
+
+```yaml
+verdict: Approve
+critical: 0
+high: 0
+medium: 0
+low: 0
 blocking_ids: []
 ```
