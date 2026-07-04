@@ -1,6 +1,6 @@
 # kscribe
 
-kscribe is a Kubernetes operator that automatically diagnoses events using an LLM and persists RCA results into a SQLite history mirror.
+kscribe is a Kubernetes operator that automatically diagnoses Warning events using an LLM and persists RCA results into a SQLite history mirror, surfaced through a live dashboard with incident chat. It ships production guardrails out of the box: retention pruning, Prometheus metrics, optional dashboard auth, and an hourly cap on LLM spend.
 
 ---
 
@@ -11,15 +11,19 @@ flowchart LR
     event["Kubernetes Warning Event<br/>BackOff / OOMKilling / FailedScheduling"] --> watcher["Event watcher"]
     watcher --> policy["DiagnosisPolicy<br/>reason filter, model, max iterations"]
     policy --> cr["KscribeDiagnosis CR<br/>Pending -> Diagnosing"]
-    cr --> enricher["Context enricher<br/>event, object, logs, related state"]
+    cr --> limiter["Rate limiter<br/>maxDiagnosesPerHour, over-limit requeues"]
+    limiter --> enricher["Context enricher<br/>event, object, logs, related state"]
     enricher --> redactor["Redactor<br/>tokens, passwords, keys"]
     redactor --> agent["LLM diagnosis agent<br/>guardrails + tool loop + token caps"]
     agent --> provider["OpenAI-compatible provider<br/>OpenAI / Gemini / Groq / local"]
     provider --> agent
     agent --> status["CR status<br/>RCA, tokens, provider/model"]
     agent --> sqlite["SQLite history mirror<br/>incidents, diagnoses, chat"]
-    sqlite --> dashboard["Dashboard + incident chat<br/>templ / HTMX / SSE"]
+    sqlite --> dashboard["Dashboard + incident chat<br/>templ / HTMX / SSE, optional token auth"]
     status --> dashboard
+    agent -.-> metrics["Prometheus :9090<br/>outcomes, throttles, tokens, latency"]
+    pruner["Retention pruner (hourly)<br/>old rows + finished CRs"] -.-> sqlite
+    pruner -.-> cr
 ```
 
 ---
@@ -83,11 +87,14 @@ kubectl rollout status deployment/kscribe -n kscribe-system
 kubectl get kscribediagnoses -n kscribe-system
 ```
 
-The dashboard is available via the `kscribe-dashboard` ClusterIP Service on port 8080. Port-forward for local access:
+The dashboard is available via the `kscribe-dashboard` ClusterIP Service on port 8080 (metrics on 9090 when enabled). Port-forward for local access:
 
 ```sh
 kubectl port-forward svc/kscribe-dashboard 8080:8080 -n kscribe-system
+curl -s localhost:9090/metrics | grep kscribe_   # after: kubectl port-forward ... 9090:9090
 ```
+
+If `dashboard.token` is set, the browser prompts for the token at `/login` (or send `Authorization: Bearer <token>`); `/healthz` stays open for probes.
 
 Incident detail pages show the diagnosis status, RCA/remediation, redacted context, chat history, and audit metadata including the LLM provider, model, token count, start/completion timestamps, and persistence state.
 

@@ -37,6 +37,11 @@ key is optional at install time.
 | `persistence.existingClaim` | `""` | Reuse an existing PVC |
 | `defaultPolicy.enabled` | `true` | Install the namespace default policy |
 | `defaultPolicy.eventReasons` | BackOff, OOMKilling, Failed, FailedScheduling | Reasons that trigger a diagnosis |
+| `retentionPeriod` | `720h` | Prune old incidents/diagnoses/chat rows and finished CRs hourly; `0` disables |
+| `metrics.enabled` / `metrics.port` | `true` / `9090` | Prometheus endpoint with scrape annotations on the Service |
+| `dashboard.token` | `""` (auth off) | Static bearer token for the dashboard; creates a Secret |
+| `dashboard.existingSecret` | `""` | Use an existing Secret for the dashboard token instead |
+| `maxDiagnosesPerHour` | `30` | Global LLM cost cap; over-limit CRs stay Pending and retry; `0` = unlimited |
 
 ## CRDs
 
