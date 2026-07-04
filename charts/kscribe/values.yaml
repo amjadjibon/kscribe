@@ -60,7 +60,7 @@ retentionPeriod: 720h
 metrics:
   # Serve Prometheus metrics (controller-runtime + kscribe_* collectors).
   enabled: true
-  port: 8081
+  port: 9090
 
 # Max LLM diagnosis starts per hour across the operator (cost guard for
 # event storms). 0 = unlimited; over-limit diagnoses stay Pending and retry.

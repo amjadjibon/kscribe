@@ -41,7 +41,7 @@ kscribe sends enriched, redacted cluster context (event messages, pod metadata, 
 | Knob | Env var | Helm value | Default | Notes |
 |------|---------|------------|---------|-------|
 | Retention | `KSCRIBE_RETENTION_PERIOD` | `retentionPeriod` | `720h` (30d) | Prunes old incidents/diagnoses/chat rows and finished KscribeDiagnosis CRs hourly. `0` disables. |
-| Metrics | `KSCRIBE_METRICS_ADDR` | `metrics.enabled` / `metrics.port` | `:8081` | Prometheus endpoint: `kscribe_diagnoses_total`, `kscribe_diagnoses_throttled_total`, `kscribe_llm_tokens_total`, `kscribe_llm_request_seconds`. `0` disables. |
+| Metrics | `KSCRIBE_METRICS_ADDR` | `metrics.enabled` / `metrics.port` | `:9090` | Prometheus endpoint: `kscribe_diagnoses_total`, `kscribe_diagnoses_throttled_total`, `kscribe_llm_tokens_total`, `kscribe_llm_request_seconds`. `0` disables. |
 | Dashboard auth | `KSCRIBE_DASHBOARD_TOKEN` | `dashboard.token` / `dashboard.existingSecret` | off | Static bearer token (`Authorization: Bearer …` or login cookie). Use a high-entropy token (e.g. `openssl rand -hex 32`); failed logins are throttled to 10/min. `/healthz` stays open. |
 | LLM cost cap | `KSCRIBE_MAX_DIAGNOSES_PER_HOUR` | `maxDiagnosesPerHour` | `30` | Global cap on diagnosis starts per hour. Over-limit CRs stay `Pending` and retry with jitter — nothing is dropped. `0` = unlimited. |
 
