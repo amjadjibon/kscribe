@@ -4,9 +4,47 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 const authCookieName = "kscribe_token"
+
+// loginAttemptLimit / loginAttemptWindow bound failed login attempts.
+// ponytail: global window, not per-IP — an internal dashboard behind
+// ClusterIP doesn't warrant per-client tracking; switch to a per-IP map if
+// the dashboard is ever exposed publicly.
+const (
+	loginAttemptLimit  = 10
+	loginAttemptWindow = time.Minute
+)
+
+// loginLimiter is a sliding window over failed login attempts.
+type loginLimiter struct {
+	mu       sync.Mutex
+	failures []time.Time
+}
+
+// tooMany reports whether the failed-attempt budget is exhausted.
+func (l *loginLimiter) tooMany() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := time.Now().Add(-loginAttemptWindow)
+	keep := l.failures[:0]
+	for _, t := range l.failures {
+		if t.After(cutoff) {
+			keep = append(keep, t)
+		}
+	}
+	l.failures = keep
+	return len(l.failures) >= loginAttemptLimit
+}
+
+func (l *loginLimiter) recordFailure() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.failures = append(l.failures, time.Now())
+}
 
 // tokenMatches compares a candidate against the configured token in constant
 // time (SEC-001).
@@ -69,8 +107,14 @@ func (s *Server) loginForm(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
+	if s.loginAttempts.tooMany() {
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, "too many login attempts; try again later", http.StatusTooManyRequests)
+		return
+	}
 	_ = r.ParseForm()
 	if !s.tokenMatches(r.FormValue("token")) {
+		s.loginAttempts.recordFailure()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(strings.Replace(loginPage, "%s", `<p class="err">Invalid token</p>`, 1)))

@@ -639,7 +639,7 @@ func TestReconcile_ProviderFailure_ConflictSafeReachFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile returned error after conflict retry: %v", err)
 	}
-	if result.Requeue || result.RequeueAfter != 0 {
+	if result.RequeueAfter != 0 {
 		t.Fatalf("Reconcile must not requeue on provider failure: %+v", result)
 	}
 

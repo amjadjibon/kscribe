@@ -164,3 +164,29 @@ func TestLoginFormServed(t *testing.T) {
 		t.Error("login page does not contain the token form field")
 	}
 }
+
+// TestLoginThrottled verifies the failed-attempt window returns 429 once
+// exhausted, including for subsequent correct-token attempts.
+func TestLoginThrottled(t *testing.T) {
+	ts := newAuthServer(t)
+
+	for i := 0; i < 10; i++ {
+		resp, err := noRedirect().PostForm(ts.URL+"/login", url.Values{"token": {"wrong"}})
+		if err != nil {
+			t.Fatalf("POST /login #%d: %v", i, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("attempt %d = %d, want 401", i, resp.StatusCode)
+		}
+	}
+
+	resp, err := noRedirect().PostForm(ts.URL+"/login", url.Values{"token": {testToken}})
+	if err != nil {
+		t.Fatalf("POST /login after exhaustion: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("login after 10 failures = %d, want 429", resp.StatusCode)
+	}
+}

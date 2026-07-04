@@ -32,10 +32,11 @@ type StoreReader interface {
 
 // Server holds the web server dependencies.
 type Server struct {
-	store     StoreReader
-	broker    *Broker
-	provider  agent.Provider
-	authToken string
+	store         StoreReader
+	broker        *Broker
+	provider      agent.Provider
+	authToken     string
+	loginAttempts loginLimiter
 }
 
 // New returns a Server.
