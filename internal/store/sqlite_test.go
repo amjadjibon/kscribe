@@ -732,3 +732,56 @@ func TestMigration0003ChatTable(t *testing.T) {
 		t.Fatalf("chat_messages table or columns missing: %v", err)
 	}
 }
+
+// TestPrune verifies old incidents and their children are deleted while
+// recent incidents survive.
+func TestPrune(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	old := time.Now().Add(-48 * time.Hour)
+	recent := time.Now()
+
+	for _, inc := range []Incident{
+		{Namespace: "default", Name: "old-inc", Phase: "Done", CreatedAt: old, UpdatedAt: old},
+		{Namespace: "default", Name: "new-inc", Phase: "Done", CreatedAt: recent, UpdatedAt: recent},
+	} {
+		if err := s.UpsertIncident(ctx, inc); err != nil {
+			t.Fatalf("UpsertIncident(%s): %v", inc.Name, err)
+		}
+	}
+	for _, name := range []string{"old-inc", "new-inc"} {
+		if err := s.InsertDiagnosis(ctx, Diagnosis{Namespace: "default", Name: name}, map[string]string{"k": "v"}); err != nil {
+			t.Fatalf("InsertDiagnosis(%s): %v", name, err)
+		}
+		if err := s.AppendChatMessage(ctx, "default", name, "user", "hello"); err != nil {
+			t.Fatalf("AppendChatMessage(%s): %v", name, err)
+		}
+	}
+
+	n, err := s.Prune(ctx, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("Prune deleted %d incidents, want 1", n)
+	}
+
+	count := func(table, name string) int {
+		var c int
+		if err := s.db.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE namespace='default' AND name=?", table), name,
+		).Scan(&c); err != nil {
+			t.Fatalf("count %s/%s: %v", table, name, err)
+		}
+		return c
+	}
+	for _, table := range []string{"incidents", "diagnoses", "chat_messages"} {
+		if got := count(table, "old-inc"); got != 0 {
+			t.Errorf("%s: old-inc rows = %d, want 0", table, got)
+		}
+		if got := count(table, "new-inc"); got == 0 {
+			t.Errorf("%s: new-inc rows = 0, want >0", table)
+		}
+	}
+}

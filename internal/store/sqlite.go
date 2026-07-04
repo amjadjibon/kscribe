@@ -212,6 +212,42 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	return err
 }
 
+// Prune deletes incidents last updated before olderThan, along with their
+// diagnoses and chat messages. Neither child table cascades (diagnoses has a
+// non-cascading FK, chat_messages has none), so all three are deleted
+// explicitly in one transaction. Returns the number of incidents deleted.
+// Timestamps are stored as RFC3339Nano strings (see UpsertIncident), so the
+// cutoff is formatted the same way; lexicographic order matches chronological
+// order for UTC RFC3339 strings.
+func (s *Store) Prune(ctx context.Context, olderThan time.Time) (int64, error) {
+	cutoff := olderThan.UTC().Format(time.RFC3339Nano)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin prune tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	const matchOld = `SELECT namespace, name FROM incidents WHERE updated_at < ?`
+	for _, q := range []string{
+		`DELETE FROM chat_messages WHERE (namespace, name) IN (` + matchOld + `)`,
+		`DELETE FROM diagnoses WHERE (namespace, name) IN (` + matchOld + `)`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, cutoff); err != nil {
+			return 0, fmt.Errorf("prune children: %w", err)
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM incidents WHERE updated_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune incidents: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit prune tx: %w", err)
+	}
+	return n, nil
+}
+
 // ListIncidents returns incidents ordered by updated_at DESC, capped at limit rows.
 func (s *Store) ListIncidents(ctx context.Context, limit int) ([]Incident, error) {
 	return s.ListIncidentsPage(ctx, IncidentFilter{}, limit, 0)

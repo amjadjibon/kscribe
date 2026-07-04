@@ -53,6 +53,8 @@ spec:
           value: {{ .Values.leaderElect | quote }}
         - name: KSCRIBE_REDACT_ENABLED
           value: {{ .Values.redactEnabled | quote }}
+        - name: KSCRIBE_RETENTION_PERIOD
+          value: {{ .Values.retentionPeriod | quote }}
         ports:
         - name: http
           containerPort: {{ .Values.service.port }}

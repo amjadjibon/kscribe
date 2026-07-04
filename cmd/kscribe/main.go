@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -16,6 +18,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -44,6 +47,60 @@ func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// runPruner loops hourly until ctx is done, deleting SQLite history rows and
+// terminal-phase KscribeDiagnosis CRs older than the retention window.
+// ponytail: per-replica, best-effort — errors are logged and retried next tick.
+func runPruner(ctx context.Context, st *store.Store, c client.Client, retention time.Duration) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		cutoff := time.Now().Add(-retention)
+
+		n, err := st.Prune(ctx, cutoff)
+		if err != nil {
+			slog.Error("prune sqlite history", "error", err)
+		} else if n > 0 {
+			slog.Info("pruned sqlite history", "incidents_deleted", n, "cutoff", cutoff.UTC().Format(time.RFC3339))
+		}
+
+		var list kscribev1alpha1.KscribeDiagnosisList
+		if err := c.List(ctx, &list); err != nil {
+			slog.Error("prune list diagnoses", "error", err)
+		} else {
+			deleted := 0
+			for i := range list.Items {
+				d := &list.Items[i]
+				switch d.Status.Phase {
+				case kscribev1alpha1.DiagnosisPhaseDone, kscribev1alpha1.DiagnosisPhasePartial, kscribev1alpha1.DiagnosisPhaseFailed:
+				default:
+					continue // only terminal phases are pruned
+				}
+				finished := d.CreationTimestamp.Time
+				if d.Status.CompletedAt != nil {
+					finished = d.Status.CompletedAt.Time
+				}
+				if finished.After(cutoff) {
+					continue
+				}
+				if err := c.Delete(ctx, d); err != nil && !apierrors.IsNotFound(err) {
+					slog.Error("prune delete diagnosis", "namespace", d.Namespace, "name", d.Name, "error", err)
+					continue
+				}
+				deleted++
+			}
+			if deleted > 0 {
+				slog.Info("pruned finished diagnosis CRs", "deleted", deleted)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -199,6 +256,16 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				return nil
 			})); err != nil {
 				return fmt.Errorf("add web server runnable: %w", err)
+			}
+
+			// Retention pruner — hourly sweep of old SQLite rows and finished CRs.
+			if cfg.RetentionPeriod > 0 {
+				if err := mgr.Add(ctrlmgr.RunnableFunc(func(ctx context.Context) error {
+					runPruner(ctx, st, mgr.GetClient(), cfg.RetentionPeriod)
+					return nil
+				})); err != nil {
+					return fmt.Errorf("add pruner runnable: %w", err)
+				}
 			}
 
 			slog.Info("starting manager")
