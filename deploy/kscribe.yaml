@@ -695,6 +695,13 @@ spec:
     - OOMKilling
     - Failed
     - FailedScheduling
+    - Unhealthy
+    - FailedMount
+    - FailedAttachVolume
+    - FailedCreate
+    - FailedCreatePodSandBox
+    - Evicted
+    - BackoffLimitExceeded
   llmProvider: "openai"
   llmModel: "gpt-4o-mini"
   maxIterations: 5

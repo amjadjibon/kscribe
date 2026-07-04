@@ -94,6 +94,13 @@ defaultPolicy:
     - OOMKilling
     - Failed
     - FailedScheduling
+    - Unhealthy
+    - FailedMount
+    - FailedAttachVolume
+    - FailedCreate
+    - FailedCreatePodSandBox
+    - Evicted
+    - BackoffLimitExceeded
   maxIterations: 5
   redact: true
 

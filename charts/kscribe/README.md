@@ -36,7 +36,7 @@ key is optional at install time.
 | `persistence.storageClass` | `""` | PVC storage class |
 | `persistence.existingClaim` | `""` | Reuse an existing PVC |
 | `defaultPolicy.enabled` | `true` | Install the namespace default policy |
-| `defaultPolicy.eventReasons` | BackOff, OOMKilling, Failed, FailedScheduling | Reasons that trigger a diagnosis |
+| `defaultPolicy.eventReasons` | BackOff, OOMKilling, Failed, FailedScheduling, Unhealthy, FailedMount, FailedAttachVolume, FailedCreate, FailedCreatePodSandBox, Evicted, BackoffLimitExceeded | Reasons that trigger a diagnosis |
 | `retentionPeriod` | `720h` | Prune old incidents/diagnoses/chat rows and finished CRs hourly; `0` disables |
 | `metrics.enabled` / `metrics.port` | `true` / `9090` | Prometheus endpoint with scrape annotations on the Service |
 | `dashboard.token` | `""` (auth off) | Static bearer token for the dashboard; creates a Secret |

@@ -42,7 +42,7 @@ type Config struct {
 
 	// EventReasonAllowlist is the set of Kubernetes event reasons kscribe
 	// will act on. Comma-separated in env form.
-	EventReasonAllowlist []string `env:"KSCRIBE_EVENT_REASON_ALLOWLIST" envSeparator:"," envDefault:"BackOff,OOMKilling,Failed,FailedScheduling"`
+	EventReasonAllowlist []string `env:"KSCRIBE_EVENT_REASON_ALLOWLIST" envSeparator:"," envDefault:"BackOff,OOMKilling,Failed,FailedScheduling,Unhealthy,FailedMount,FailedAttachVolume,FailedCreate,FailedCreatePodSandBox,Evicted,BackoffLimitExceeded"`
 
 	// RedactEnabled is audit metadata only — redaction is always enforced by EncodeSnapshot
 	// (SEC-001) and cannot be disabled via this flag. The value flows to prompt_redacted
