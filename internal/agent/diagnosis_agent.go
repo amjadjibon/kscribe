@@ -58,7 +58,7 @@ Use the available tools if you need more information. When you have sufficient i
 func (a *DiagnosisAgent) Run(ctx context.Context, snapshotJSON []byte) Outcome {
 	maxIter := a.MaxIter
 	if maxIter <= 0 {
-		maxIter = 5 // ponytail: sensible default; configure via policy
+		maxIter = 5 // fallback when unset; normally comes from policy/CR spec/env
 	}
 
 	messages := []Message{

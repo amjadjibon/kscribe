@@ -30,7 +30,7 @@ flowchart LR
 
 ## Limitations
 
-**CON-005 — core v1 Events only.** kscribe watches `core/v1 Event` objects (Warning type) exclusively. It does not watch custom events or metrics signals. Pod-log enrichment is available via the tool executor (future wire-in); the MVP uses spec fields from the triggered event.
+**CON-005 — core v1 Events only.** kscribe watches `core/v1 Event` objects (Warning type) exclusively. It does not watch custom events or metrics signals. The diagnosis agent enriches context via the wired tool executor (pod logs, related events, node state) on top of the event's spec fields.
 
 ---
 
