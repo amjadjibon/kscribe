@@ -431,6 +431,8 @@ func TestReconcile_MirrorsTerminalIncidentMetadata(t *testing.T) {
 	kd.Status.Phase = kscribev1alpha1.DiagnosisPhaseDone
 	kd.Status.TokensUsed = 99
 	kd.Status.Persisted = true
+	completed := metav1.Time{Time: time.Now().Add(-2 * time.Hour)}
+	kd.Status.CompletedAt = &completed
 	fc := buildClient(scheme, kd).Build()
 
 	st := &fakeStore{}
@@ -453,6 +455,12 @@ func TestReconcile_MirrorsTerminalIncidentMetadata(t *testing.T) {
 	}
 	if got.Phase != "Done" || got.TokensUsed != 99 || !got.Persisted {
 		t.Fatalf("terminal mirror missing status metadata: %+v", got)
+	}
+	// MED-001: the mirror must pin UpdatedAt to completion time, not now —
+	// otherwise resyncs keep refreshing updated_at and pruning never cuts in.
+	// metav1.Time round-trips at second precision, hence the truncation.
+	if !got.UpdatedAt.Equal(completed.Time.UTC().Truncate(time.Second)) {
+		t.Fatalf("terminal mirror UpdatedAt = %v, want completion time %v", got.UpdatedAt, completed.Time.UTC())
 	}
 }
 
@@ -631,7 +639,7 @@ func TestReconcile_ProviderFailure_ConflictSafeReachFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile returned error after conflict retry: %v", err)
 	}
-	if result.Requeue || result.RequeueAfter != 0 {
+	if result.RequeueAfter != 0 {
 		t.Fatalf("Reconcile must not requeue on provider failure: %+v", result)
 	}
 
@@ -648,5 +656,52 @@ func TestReconcile_ProviderFailure_ConflictSafeReachFailed(t *testing.T) {
 	}
 	if got.Status.Phase != kscribev1alpha1.DiagnosisPhaseFailed {
 		t.Fatalf("want Failed, got %s — patchStatus did not retry through the conflict", got.Status.Phase)
+	}
+}
+
+// TestReconcile_RateLimited proves a throttled diagnosis stays Pending with a
+// requeue and never reaches the provider or the store.
+func TestReconcile_RateLimited(t *testing.T) {
+	scheme := testScheme()
+	kd := newKD("diag-throttled", "default")
+	fc := buildClient(scheme, kd).Build()
+
+	st := &fakeStore{}
+	prov := goodProvider()
+	r := reconcilerFor(st, prov)
+	r.Client = fc
+	lim := controller.NewRateLimiter(1)
+	lim.Allow() // exhaust the budget
+	r.RateLimiter = lim
+
+	res, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "diag-throttled", Namespace: "default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+	if res.RequeueAfter < 2*time.Minute || res.RequeueAfter > 5*time.Minute {
+		t.Fatalf("RequeueAfter = %v, want between 2m and 5m", res.RequeueAfter)
+	}
+	if st.insertCalled != 0 {
+		t.Fatalf("store must not be written when throttled; insertCalled=%d", st.insertCalled)
+	}
+
+	var got kscribev1alpha1.KscribeDiagnosis
+	if err := fc.Get(context.Background(),
+		types.NamespacedName{Name: "diag-throttled", Namespace: "default"}, &got); err != nil {
+		t.Fatalf("get CR: %v", err)
+	}
+	if got.Status.Phase != kscribev1alpha1.DiagnosisPhasePending {
+		t.Fatalf("throttled CR phase = %s, want Pending", got.Status.Phase)
+	}
+	var reason string
+	for _, c := range got.Status.Conditions {
+		if c.Type == kscribev1alpha1.ConditionDiagnosed {
+			reason = c.Reason
+		}
+	}
+	if reason != "RateLimited" {
+		t.Fatalf("want Diagnosed condition with reason RateLimited, got %q", reason)
 	}
 }

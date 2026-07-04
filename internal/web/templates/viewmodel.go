@@ -1,13 +1,13 @@
 package templates
 
 import (
+	"encoding/json"
 	"github.com/amjadjibon/kscribe/internal/enricher"
 	"github.com/amjadjibon/kscribe/internal/store"
-	"github.com/bytedance/sonic"
 )
 
 // TraceStep is one tool-call in a diagnosis trace.
-// CON-003: decoded with sonic.
+// Decoded with stdlib encoding/json.
 type TraceStep struct {
 	Tool   string `json:"tool"`
 	Args   any    `json:"args"`
@@ -29,7 +29,7 @@ type IncidentDetailView struct {
 }
 
 // BuildDetailView decodes context_json and trace_json for each diagnosis.
-// CON-003: uses sonic, not encoding/json.
+// JSON via stdlib encoding/json.
 func BuildDetailView(d *store.IncidentDetail, msgs []store.ChatMessage) *IncidentDetailView {
 	v := &IncidentDetailView{IncidentDetail: d, ChatMessages: msgs}
 	for _, diag := range d.Diagnoses {
@@ -38,7 +38,7 @@ func BuildDetailView(d *store.IncidentDetail, msgs []store.ChatMessage) *Inciden
 			dv.Snapshot, _ = enricher.DecodeSnapshot(diag.ContextJSON)
 		}
 		if len(diag.TraceJSON) > 0 {
-			_ = sonic.Unmarshal(diag.TraceJSON, &dv.TraceSteps)
+			_ = json.Unmarshal(diag.TraceJSON, &dv.TraceSteps)
 		}
 		v.DiagnosisViews = append(v.DiagnosisViews, dv)
 	}
@@ -46,9 +46,9 @@ func BuildDetailView(d *store.IncidentDetail, msgs []store.ChatMessage) *Inciden
 }
 
 // marshalJSON returns a compact JSON string for display; falls back to "?" on error.
-// CON-003: uses sonic.
+// JSON via stdlib encoding/json.
 func marshalJSON(v any) string {
-	b, err := sonic.Marshal(v)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return "?"
 	}

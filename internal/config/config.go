@@ -13,6 +13,10 @@ type Config struct {
 	// Web server listen address.
 	Addr string `env:"KSCRIBE_ADDR" envDefault:":8080"`
 
+	// MetricsAddr is the controller-runtime Prometheus metrics listen
+	// address. "0" disables the metrics server.
+	MetricsAddr string `env:"KSCRIBE_METRICS_ADDR" envDefault:":9090"`
+
 	// Kubernetes namespace the operator manages. Empty means cluster-wide.
 	OperatorNamespace string `env:"KSCRIBE_OPERATOR_NAMESPACE" envDefault:""`
 
@@ -31,6 +35,11 @@ type Config struct {
 	// DiagnosisConcurrency is the max parallel diagnosis goroutines.
 	DiagnosisConcurrency int `env:"KSCRIBE_DIAGNOSIS_CONCURRENCY" envDefault:"4"`
 
+	// MaxDiagnosesPerHour caps LLM diagnosis starts per hour across the whole
+	// operator (cost guard for event storms). 0 = unlimited. Over-limit CRs
+	// stay Pending and requeue.
+	MaxDiagnosesPerHour int `env:"KSCRIBE_MAX_DIAGNOSES_PER_HOUR" envDefault:"30"`
+
 	// EventReasonAllowlist is the set of Kubernetes event reasons kscribe
 	// will act on. Comma-separated in env form.
 	EventReasonAllowlist []string `env:"KSCRIBE_EVENT_REASON_ALLOWLIST" envSeparator:"," envDefault:"BackOff,OOMKilling,Failed,FailedScheduling"`
@@ -46,6 +55,11 @@ type Config struct {
 	// RetentionPeriod is how long incidents, diagnoses, chat history, and
 	// finished KscribeDiagnosis CRs are kept before pruning. 0 disables pruning.
 	RetentionPeriod time.Duration `env:"KSCRIBE_RETENTION_PERIOD" envDefault:"720h"`
+
+	// DashboardToken protects the dashboard with static bearer-token auth
+	// (Authorization header or login cookie). Empty disables auth.
+	// SEC-001: never logged.
+	DashboardToken string `env:"KSCRIBE_DASHBOARD_TOKEN" envDefault:""`
 
 	// ResyncPeriod is how often the controller re-syncs watched resources.
 	ResyncPeriod time.Duration `env:"KSCRIBE_RESYNC_PERIOD" envDefault:"10m"`

@@ -2,7 +2,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -17,10 +19,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	kscribev1alpha1 "github.com/amjadjibon/kscribe/api/v1alpha1"
-	"github.com/bytedance/sonic"
 
 	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/enricher"
+	"github.com/amjadjibon/kscribe/internal/metrics"
 	"github.com/amjadjibon/kscribe/internal/store"
 )
 
@@ -51,6 +53,7 @@ type KscribeDiagnosisReconciler struct {
 	Tools         []agent.ToolDefinition
 	ToolExecutor  agent.ToolExecutor   // nil falls back to stub error in agent loop
 	KubeClient    kubernetes.Interface // nil → falls back to minimal spec-only snapshot
+	RateLimiter   *RateLimiter         // nil = unlimited diagnosis starts
 }
 
 const diagnosingRecoveryAfter = 10 * time.Minute
@@ -63,7 +66,14 @@ func (r *KscribeDiagnosisReconciler) publish(id, html string) {
 }
 
 func incidentFromDiagnosis(kd *kscribev1alpha1.KscribeDiagnosis) store.Incident {
+	// Terminal mirrors pin updated_at to completion time — otherwise every
+	// resync would refresh it and retention pruning could never cut in.
+	var updatedAt time.Time
+	if kd.Status.CompletedAt != nil {
+		updatedAt = kd.Status.CompletedAt.Time.UTC()
+	}
 	return store.Incident{
+		UpdatedAt:               updatedAt,
 		Namespace:               kd.Namespace,
 		Name:                    kd.Name,
 		EventUID:                kd.Spec.EventUID,
@@ -137,6 +147,24 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			return ctrl.Result{}, fmt.Errorf("upsert incident (terminal mirror): %w", err)
 		}
 		return ctrl.Result{}, nil
+	}
+
+	// Global cost cap: over-limit CRs stay Pending and requeue — never dropped.
+	if !r.RateLimiter.Allow() {
+		metrics.DiagnosesThrottledTotal.Inc()
+		logger.Info("diagnosis throttled by rate limit", "name", req.Name, "namespace", req.Namespace)
+		_ = r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
+			o.Status.Phase = kscribev1alpha1.DiagnosisPhasePending
+			kscribev1alpha1.SetCondition(&o.Status, metav1.Condition{
+				Type:               kscribev1alpha1.ConditionDiagnosed,
+				Status:             metav1.ConditionFalse,
+				Reason:             "RateLimited",
+				Message:            "diagnosis start rate limit reached; will retry",
+				ObservedGeneration: o.Generation,
+			})
+		})
+		// 2–5 min with jitter so a storm of throttled CRs doesn't retry in lockstep.
+		return ctrl.Result{RequeueAfter: 2*time.Minute + time.Duration(rand.Int64N(int64(3*time.Minute)))}, nil
 	}
 
 	logger.Info("starting diagnosis", "name", req.Name, "namespace", req.Namespace, "reason", kd.Spec.Reason)
@@ -230,7 +258,10 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Tools:    r.Tools,
 		MaxIter:  maxIter,
 	}
+	runStart := time.Now()
 	outcome := ag.Run(ctx, snapshotJSON)
+	metrics.LLMRequestSeconds.WithLabelValues(llmProvider).Observe(time.Since(runStart).Seconds())
+	metrics.LLMTokensTotal.WithLabelValues(llmProvider, llmModel).Add(float64(outcome.TokensUsed))
 
 	completedAt := time.Now().UTC()
 
@@ -253,6 +284,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			LLMModel:                llmModel,
 			TokensUsed:              outcome.TokensUsed,
 		})
+		metrics.DiagnosesTotal.WithLabelValues("failed").Inc()
 		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
 		// ponytail: patchStatus retries on conflict so the Failed phase always lands,
 		// stopping the retry storm (provider-failure CR stays Diagnosing → requeues forever).
@@ -274,7 +306,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// ADR-003 step 3: write final RCA to SQLite BEFORE updating CR phase.
-	traceJSON, _ := sonic.Marshal(outcome.Trace)
+	traceJSON, _ := json.Marshal(outcome.Trace)
 	if len(traceJSON) == 0 {
 		traceJSON = []byte("[]")
 	}
@@ -331,6 +363,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		Persisted:               true,
 	})
 
+	metrics.DiagnosesTotal.WithLabelValues(strings.ToLower(string(outcome.Phase))).Inc()
 	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="%s">%s</span>`, outcome.Phase, outcome.Phase))
 	return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
 		o.Status.Phase = outcome.Phase

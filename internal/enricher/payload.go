@@ -1,6 +1,6 @@
 package enricher
 
-import "github.com/bytedance/sonic"
+import "encoding/json"
 
 // RedactedPlaceholder is the stable string substituted for redacted values.
 const RedactedPlaceholder = "***REDACTED***"
@@ -81,17 +81,17 @@ type ReplicaSetStatus struct {
 }
 
 // EncodeSnapshot redacts then serializes. Redaction is enforced here so it cannot be bypassed (SEC-001).
-// CON-003: uses sonic, not encoding/json.
+// JSON via stdlib encoding/json.
 func EncodeSnapshot(s *Snapshot) ([]byte, error) {
 	RedactSnapshot(s)
-	return sonic.Marshal(s)
+	return json.Marshal(s)
 }
 
 // DecodeSnapshot deserializes a snapshot.
-// CON-003: uses sonic, not encoding/json.
+// JSON via stdlib encoding/json.
 func DecodeSnapshot(b []byte) (*Snapshot, error) {
 	var s Snapshot
-	if err := sonic.Unmarshal(b, &s); err != nil {
+	if err := json.Unmarshal(b, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil

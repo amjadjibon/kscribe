@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -66,34 +65,12 @@ func runPruner(ctx context.Context, st *store.Store, c client.Client, retention 
 			slog.Info("pruned sqlite history", "incidents_deleted", n, "cutoff", cutoff.UTC().Format(time.RFC3339))
 		}
 
-		var list kscribev1alpha1.KscribeDiagnosisList
-		if err := c.List(ctx, &list); err != nil {
-			slog.Error("prune list diagnoses", "error", err)
-		} else {
-			deleted := 0
-			for i := range list.Items {
-				d := &list.Items[i]
-				switch d.Status.Phase {
-				case kscribev1alpha1.DiagnosisPhaseDone, kscribev1alpha1.DiagnosisPhasePartial, kscribev1alpha1.DiagnosisPhaseFailed:
-				default:
-					continue // only terminal phases are pruned
-				}
-				finished := d.CreationTimestamp.Time
-				if d.Status.CompletedAt != nil {
-					finished = d.Status.CompletedAt.Time
-				}
-				if finished.After(cutoff) {
-					continue
-				}
-				if err := c.Delete(ctx, d); err != nil && !apierrors.IsNotFound(err) {
-					slog.Error("prune delete diagnosis", "namespace", d.Namespace, "name", d.Name, "error", err)
-					continue
-				}
-				deleted++
-			}
-			if deleted > 0 {
-				slog.Info("pruned finished diagnosis CRs", "deleted", deleted)
-			}
+		deleted, err := controller.PruneDiagnosisCRs(ctx, c, cutoff)
+		if err != nil {
+			slog.Error("prune diagnosis CRs", "error", err)
+		}
+		if deleted > 0 {
+			slog.Info("pruned finished diagnosis CRs", "deleted", deleted)
 		}
 
 		select {
@@ -173,7 +150,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				LeaderElection:          cfg.LeaderElect,
 				LeaderElectionID:        "kscribe.amjadjibon.dev",
 				LeaderElectionNamespace: leaderNS,
-				Metrics:                 metricsserver.Options{BindAddress: "0"}, // dashboard owns /healthz
+				Metrics:                 metricsserver.Options{BindAddress: cfg.MetricsAddr}, // dashboard owns /healthz
 			}
 			// Restrict cache to operator namespace when set; empty = cluster-wide.
 			if cfg.OperatorNamespace != "" {
@@ -197,7 +174,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 			// SSE broker shared between reconciler and web server.
 			broker := web.NewBroker()
 
-			// OpenAI-compatible provider built from config (CON-003: sonic used inside package).
+			// OpenAI-compatible provider built from config.
 			// provider=google/gemini auto-targets Gemini's OpenAI-compatible endpoint.
 			baseURL := agent.ResolveBaseURL(cfg.LLMProvider, cfg.LLMBaseURL)
 			provider := agent.NewOpenAIClient(baseURL, cfg.LLMAPIKey, cfg.LLMModel)
@@ -232,6 +209,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				Tools:         agent.KubeTools(),
 				KubeClient:    kcs,
 				ToolExecutor:  &controller.KubeToolExecutor{Client: mgr.GetClient(), Kube: kcs},
+				RateLimiter:   controller.NewRateLimiter(cfg.MaxDiagnosesPerHour),
 			}
 			if err := reconciler.SetupWithManager(mgr); err != nil {
 				return fmt.Errorf("setup diagnosis reconciler: %w", err)
@@ -239,7 +217,7 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 
 			// Web dashboard alongside the manager, bound to the manager context.
 			// provider is shared with the reconciler (same client, no extra connections).
-			webSrv := web.New(st, broker, provider)
+			webSrv := web.New(st, broker, provider).WithAuthToken(cfg.DashboardToken)
 			if err := mgr.Add(ctrlmgr.RunnableFunc(func(ctx context.Context) error {
 				srv := &http.Server{
 					Addr:    cfg.Addr,

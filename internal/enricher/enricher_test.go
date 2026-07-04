@@ -312,9 +312,9 @@ func TestRedactSnapshot_DeploymentAndReplicaSetConditions(t *testing.T) {
 	}
 }
 
-// TestNoEncodingJSON asserts that no non-test enricher source file imports
-// "encoding/json" (CON-003: sonic only).
-func TestNoEncodingJSON(t *testing.T) {
+// TestNoSonic asserts that no non-test enricher source file imports
+// bytedance/sonic — all JSON goes through stdlib encoding/json.
+func TestNoSonic(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
@@ -327,8 +327,8 @@ func TestNoEncodingJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadFile %s: %v", e.Name(), err)
 		}
-		if strings.Contains(string(b), `"encoding/json"`) {
-			t.Errorf("file %s imports encoding/json — use github.com/bytedance/sonic (CON-003)", e.Name())
+		if strings.Contains(string(b), "bytedance/sonic") {
+			t.Errorf("file %s imports sonic — use stdlib encoding/json", e.Name())
 		}
 	}
 }

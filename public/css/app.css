@@ -217,6 +217,7 @@ section { margin-bottom: var(--sp-6); }
   border-radius: var(--r-md);
   cursor: pointer;
   transition: color .15s, border-color .15s, background .15s;
+  -webkit-user-select: none;
   user-select: none;
 }
 .theme-toggle:hover {

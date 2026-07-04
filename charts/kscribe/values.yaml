@@ -57,6 +57,22 @@ redactEnabled: true # SEC-001: redaction is always enforced; this is audit metad
 # CRs are kept before pruning (Go duration). "0" disables pruning.
 retentionPeriod: 720h
 
+metrics:
+  # Serve Prometheus metrics (controller-runtime + kscribe_* collectors).
+  enabled: true
+  port: 9090
+
+# Max LLM diagnosis starts per hour across the operator (cost guard for
+# event storms). 0 = unlimited; over-limit diagnoses stay Pending and retry.
+maxDiagnosesPerHour: 30
+
+dashboard:
+  # Static bearer token protecting the dashboard (empty = auth disabled).
+  # Provide inline (a Secret is created) OR point at an existing Secret.
+  token: ""
+  existingSecret: ""
+  existingSecretKey: dashboard-token
+
 llm:
   # provider "openai" (default) or "google"/"gemini". google auto-targets Gemini's
   # OpenAI-compatible endpoint; any OpenAI-compatible API works via baseURL.

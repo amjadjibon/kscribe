@@ -32,9 +32,11 @@ type StoreReader interface {
 
 // Server holds the web server dependencies.
 type Server struct {
-	store    StoreReader
-	broker   *Broker
-	provider agent.Provider
+	store         StoreReader
+	broker        *Broker
+	provider      agent.Provider
+	authToken     string
+	loginAttempts loginLimiter
 }
 
 // New returns a Server.
@@ -42,21 +44,38 @@ func New(st StoreReader, br *Broker, provider agent.Provider) *Server {
 	return &Server{store: st, broker: br, provider: provider}
 }
 
+// WithAuthToken enables bearer-token auth on all routes except /healthz and
+// /login. Empty token means auth stays disabled. SEC-001: the token is never
+// logged and is compared in constant time.
+func (s *Server) WithAuthToken(token string) *Server {
+	s.authToken = token
+	return s
+}
+
 // Handler returns the chi router as an http.Handler.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", s.healthz)
-	r.Get("/", s.list)
-	r.Get("/incidents/{namespace}/{name}", s.detail)
-	r.Get("/incidents/{namespace}/{name}/stream", s.stream)
-	r.Post("/incidents/{namespace}/{name}/chat", s.chatPost)
-	r.Get("/incidents/{namespace}/{name}/chat/stream", s.chatStream)
-	// ponytail: inline cache header wrapper — no middleware stack needed for a single route
-	static := http.FileServer(http.FS(public.FS))
-	r.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		static.ServeHTTP(w, r)
-	})))
+	if s.authToken != "" {
+		r.Get("/login", s.loginForm)
+		r.Post("/login", s.loginSubmit)
+	}
+	r.Group(func(pr chi.Router) {
+		if s.authToken != "" {
+			pr.Use(s.requireAuth)
+		}
+		pr.Get("/", s.list)
+		pr.Get("/incidents/{namespace}/{name}", s.detail)
+		pr.Get("/incidents/{namespace}/{name}/stream", s.stream)
+		pr.Post("/incidents/{namespace}/{name}/chat", s.chatPost)
+		pr.Get("/incidents/{namespace}/{name}/chat/stream", s.chatStream)
+		// ponytail: inline cache header wrapper — no middleware stack needed for a single route
+		static := http.FileServer(http.FS(public.FS))
+		pr.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			static.ServeHTTP(w, r)
+		})))
+	})
 	return r
 }
 

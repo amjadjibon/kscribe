@@ -3,6 +3,7 @@ package web_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,8 +13,6 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
-
-	"github.com/bytedance/sonic"
 
 	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/enricher"
@@ -472,9 +471,9 @@ func min(a, b int) int {
 	return b
 }
 
-// mustJSON marshals v with sonic or panics — test helper only.
+// mustJSON marshals v or panics — test helper only.
 func mustJSON(v any) []byte {
-	b, err := sonic.Marshal(v)
+	b, err := json.Marshal(v)
 	if err != nil {
 		panic(err)
 	}

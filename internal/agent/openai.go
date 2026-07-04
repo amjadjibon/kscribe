@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
-	"github.com/bytedance/sonic"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -17,7 +17,7 @@ import (
 )
 
 // streamChunk is the minimal SSE payload shape for streaming chat completions.
-// CON-003: sonic only.
+// JSON via stdlib encoding/json.
 type streamChunk struct {
 	Choices []struct {
 		Delta struct {
@@ -27,7 +27,7 @@ type streamChunk struct {
 }
 
 // OpenAIClient is an OpenAI-compatible chat-completions provider.
-// CON-003: sonic for all JSON encoding/decoding.
+// JSON via stdlib encoding/json.
 // ponytail: single endpoint, no streaming, no retry beyond caller's JSON repair.
 type OpenAIClient struct {
 	BaseURL    string
@@ -176,12 +176,12 @@ func fromSDKResponse(resp *openai.ChatCompletion) Response {
 // CompleteStream sends a streaming chat-completions request and calls onDelta
 // for each content chunk. The returned Response.Choices[0].Message.Content
 // holds the fully-accumulated text. Implements StreamingProvider.
-// CON-003: sonic only, no encoding/json.
+// JSON via stdlib encoding/json.
 func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta func(string) error) (Response, error) {
 	req.Model = c.Model
 	req.Stream = true
 	req.MaxTokens = effectiveMaxTokens(req)
-	body, err := sonic.Marshal(req)
+	body, err := json.Marshal(req)
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
 	}
@@ -219,7 +219,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta 
 			break
 		}
 		var chunk streamChunk
-		if err := sonic.UnmarshalString(payload, &chunk); err != nil {
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			continue // ponytail: skip malformed chunk; some providers emit non-JSON SSE lines
 		}
 		if len(chunk.Choices) > 0 {

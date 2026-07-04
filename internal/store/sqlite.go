@@ -3,12 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"strings"
 	"time"
 
-	"github.com/bytedance/sonic"
 	_ "modernc.org/sqlite"
 )
 
@@ -40,15 +40,15 @@ type Diagnosis struct {
 	Namespace   string
 	Name        string
 	EventUID    string
-	RCAJson     []byte // raw JSON — decode with sonic
+	RCAJson     []byte // raw JSON
 	Summary     string
 	RootCause   string
 	Remediation string
 	Confidence  float64
 	CreatedAt   time.Time
-	ContextJSON []byte // redacted snapshot sent to the LLM — decode with sonic
+	ContextJSON []byte // redacted snapshot sent to the LLM
 	Reasoning   string // narrative explanation of how the conclusion was reached
-	TraceJSON   []byte // tool-call trace — decode with sonic
+	TraceJSON   []byte // tool-call trace
 }
 
 // IncidentFilter holds optional filter criteria for incident list queries. SEC-002: all
@@ -185,10 +185,9 @@ ON CONFLICT(namespace, name) DO UPDATE SET
 	return err
 }
 
-// InsertDiagnosis writes a final RCA record. rcaPayload is encoded to JSON
-// with sonic (CON-003: no encoding/json).
+// InsertDiagnosis writes a final RCA record. rcaPayload is encoded to JSON.
 func (s *Store) InsertDiagnosis(ctx context.Context, d Diagnosis, rcaPayload any) error {
-	rcaJSON, err := sonic.Marshal(rcaPayload)
+	rcaJSON, err := json.Marshal(rcaPayload)
 	if err != nil {
 		return fmt.Errorf("marshal rca payload: %w", err)
 	}
@@ -218,7 +217,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 // explicitly in one transaction. Returns the number of incidents deleted.
 // Timestamps are stored as RFC3339Nano strings (see UpsertIncident), so the
 // cutoff is formatted the same way; lexicographic order matches chronological
-// order for UTC RFC3339 strings.
+// order for UTC RFC3339 strings except within the same second (variable-width
+// fractions) — irrelevant for a day-scale retention cutoff.
 func (s *Store) Prune(ctx context.Context, olderThan time.Time) (int64, error) {
 	cutoff := olderThan.UTC().Format(time.RFC3339Nano)
 

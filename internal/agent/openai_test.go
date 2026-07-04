@@ -2,13 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/bytedance/sonic"
 )
 
 // TestOpenAIClient_Complete_SDKRoundTrip is the Phase 1 gate: it drives the
@@ -23,7 +22,7 @@ func TestOpenAIClient_Complete_SDKRoundTrip(t *testing.T) {
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 		b, _ := io.ReadAll(r.Body)
-		_ = sonic.Unmarshal(b, &reqBody)
+		_ = json.Unmarshal(b, &reqBody)
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{
 			"id":"c1","object":"chat.completion","created":1,"model":"m",
