@@ -61,6 +61,19 @@ spec:
           value: {{ .Values.maxPodsPerWorkload | quote }}
         - name: KSCRIBE_METRICS_ADDR
           value: {{ .Values.metrics.enabled | ternary (printf ":%v" .Values.metrics.port) "0" | quote }}
+        {{- if or .Values.notifications.resend.apiKey .Values.notifications.resend.existingSecret }}
+        - name: KSCRIBE_RESEND_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "kscribe.resendSecretName" . }}
+              key: {{ include "kscribe.resendSecretKey" . }}
+        {{- end }}
+        {{- if .Values.notifications.to }}
+        - name: KSCRIBE_NOTIFY_EMAIL_FROM
+          value: {{ .Values.notifications.from | quote }}
+        - name: KSCRIBE_NOTIFY_EMAIL_TO
+          value: {{ join "," .Values.notifications.to | quote }}
+        {{- end }}
         {{- if or .Values.dashboard.token .Values.dashboard.existingSecret }}
         - name: KSCRIBE_DASHBOARD_TOKEN
           valueFrom:

@@ -69,6 +69,16 @@ maxDiagnosesPerHour: 30
 # Max pods log-enriched per Deployment/ReplicaSet diagnosis (context/cost bound).
 maxPodsPerWorkload: 3
 
+notifications:
+  # Email RCA results via Resend when a diagnosis finishes. Enabled only when
+  # an API key (inline or existingSecret) AND at least one recipient are set.
+  resend:
+    apiKey: ""
+    existingSecret: ""
+    existingSecretKey: resend-api-key
+  from: kscribe@notifications.local
+  to: []
+
 dashboard:
   # Static bearer token protecting the dashboard (empty = auth disabled).
   # Provide inline (a Secret is created) OR point at an existing Secret.

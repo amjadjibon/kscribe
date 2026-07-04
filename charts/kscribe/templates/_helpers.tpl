@@ -73,3 +73,20 @@ api-key
 dashboard-token
 {{- end -}}
 {{- end -}}
+
+{{/* Name of the Secret holding the Resend API key. */}}
+{{- define "kscribe.resendSecretName" -}}
+{{- if .Values.notifications.resend.existingSecret -}}
+{{- .Values.notifications.resend.existingSecret -}}
+{{- else -}}
+{{- printf "%s-resend" (include "kscribe.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "kscribe.resendSecretKey" -}}
+{{- if .Values.notifications.resend.existingSecret -}}
+{{- .Values.notifications.resend.existingSecretKey -}}
+{{- else -}}
+resend-api-key
+{{- end -}}
+{{- end -}}

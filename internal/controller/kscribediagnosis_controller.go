@@ -23,6 +23,7 @@ import (
 	"github.com/amjadjibon/kscribe/internal/agent"
 	"github.com/amjadjibon/kscribe/internal/enricher"
 	"github.com/amjadjibon/kscribe/internal/metrics"
+	"github.com/amjadjibon/kscribe/internal/notify"
 	"github.com/amjadjibon/kscribe/internal/store"
 )
 
@@ -31,6 +32,12 @@ import (
 type DiagnosisStore interface {
 	UpsertIncident(ctx context.Context, inc store.Incident) error
 	InsertDiagnosis(ctx context.Context, d store.Diagnosis, rcaPayload any) error
+}
+
+// Notifier delivers a diagnosis-result notification (e.g. email via Resend).
+// Implemented by *notify.Resend; nil disables notifications.
+type Notifier interface {
+	Notify(ctx context.Context, subject, html string) error
 }
 
 // Publisher is the SSE producer interface. *web.Broker satisfies this via a thin adapter
@@ -55,9 +62,41 @@ type KscribeDiagnosisReconciler struct {
 	KubeClient         kubernetes.Interface // nil → falls back to minimal spec-only snapshot
 	RateLimiter        *RateLimiter         // nil = unlimited diagnosis starts
 	MaxPodsPerWorkload int                  // <=0 = enricher default (3)
+	Notifier           Notifier             // nil = notifications disabled
 }
 
 const diagnosingRecoveryAfter = 10 * time.Minute
+
+// notifyTerminal fires a best-effort async notification for a terminal
+// diagnosis. Detached from the reconcile ctx (which ends immediately) with
+// its own timeout. A rare storage-error retry can re-send (accepted:
+// PLAN-REVIEW SUGGEST-001) — dedup would need persisted send-state.
+func (r *KscribeDiagnosisReconciler) notifyTerminal(kd *kscribev1alpha1.KscribeDiagnosis, phase kscribev1alpha1.DiagnosisPhase, summary, rootCause string, remediation []string) {
+	if r.Notifier == nil {
+		return
+	}
+	subject := notify.Subject(string(phase), kd.Spec.Reason, kd.Spec.InvolvedObjectNamespace, kd.Spec.InvolvedObjectName)
+	html := notify.HTML(string(phase), kd.Spec.Reason, kd.Spec.InvolvedObjectNamespace, kd.Spec.InvolvedObjectName, summary, rootCause, remediation)
+	name, ns := kd.Name, kd.Namespace
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := r.Notifier.Notify(ctx, subject, html); err != nil {
+			metrics.NotificationsTotal.WithLabelValues("failed").Inc()
+			log.Log.Error(err, "notification send failed", "namespace", ns, "name", name)
+			return
+		}
+		metrics.NotificationsTotal.WithLabelValues("sent").Inc()
+	}()
+}
+
+// remediationSteps extracts RCA remediation steps, nil-safe.
+func remediationSteps(o agent.Outcome) []string {
+	if o.RCA == nil {
+		return nil
+	}
+	return o.RCA.RemediationSteps
+}
 
 // publish emits an SSE fragment if a Publisher is wired; no-op otherwise.
 func (r *KscribeDiagnosisReconciler) publish(id, html string) {
@@ -286,6 +325,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			TokensUsed:              outcome.TokensUsed,
 		})
 		metrics.DiagnosesTotal.WithLabelValues("failed").Inc()
+		r.notifyTerminal(&kd, kscribev1alpha1.DiagnosisPhaseFailed, "", outcome.RawError, nil)
 		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
 		// patchStatus retries on conflict so the Failed phase always lands,
 		// stopping the retry storm (provider-failure CR stays Diagnosing → requeues forever).
@@ -365,6 +405,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	})
 
 	metrics.DiagnosesTotal.WithLabelValues(strings.ToLower(string(outcome.Phase))).Inc()
+	r.notifyTerminal(&kd, outcome.Phase, d.Summary, d.RootCause, remediationSteps(outcome))
 	r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="%s">%s</span>`, outcome.Phase, outcome.Phase))
 	return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
 		o.Status.Phase = outcome.Phase

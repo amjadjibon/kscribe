@@ -28,6 +28,12 @@ var (
 		Help: "Diagnosis starts denied by the hourly rate limit.",
 	})
 
+	// NotificationsTotal counts diagnosis email notifications by result.
+	NotificationsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "kscribe_notifications_total",
+		Help: "Diagnosis email notifications sent, by status (sent, failed).",
+	}, []string{"status"})
+
 	// LLMRequestSeconds observes the wall-clock duration of one diagnosis
 	// agent run (all provider round-trips of the tool loop included).
 	LLMRequestSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -38,5 +44,5 @@ var (
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(DiagnosesTotal, DiagnosesThrottledTotal, LLMTokensTotal, LLMRequestSeconds)
+	ctrlmetrics.Registry.MustRegister(DiagnosesTotal, DiagnosesThrottledTotal, NotificationsTotal, LLMTokensTotal, LLMRequestSeconds)
 }
