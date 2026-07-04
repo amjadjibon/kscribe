@@ -56,7 +56,7 @@ type Choice struct {
 
 // Usage tracks token consumption.
 type Usage struct {
-	// ponytail: only total_tokens — prompt/completion split not needed for MVP audit
+	// only total_tokens — prompt/completion split not needed for MVP audit
 	TotalTokens int `json:"total_tokens"`
 }
 

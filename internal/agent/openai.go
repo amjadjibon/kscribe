@@ -31,7 +31,7 @@ type streamChunk struct {
 // JSON via stdlib encoding/json.
 // Complete retries transient failures via the SDK (2 retries with backoff);
 // CompleteStream retries the initial connection only — never mid-stream.
-// ponytail: single endpoint; malformed-JSON recovery stays in the caller's repair turn.
+// single endpoint; malformed-JSON recovery stays in the caller's repair turn.
 type OpenAIClient struct {
 	BaseURL    string
 	APIKey     string
@@ -243,7 +243,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta 
 		}
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue // ponytail: skip malformed chunk; some providers emit non-JSON SSE lines
+			continue // skip malformed chunk; some providers emit non-JSON SSE lines
 		}
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta.Content

@@ -15,7 +15,7 @@ const (
 // ResolveBaseURL returns the effective API base for a provider. An explicit
 // baseURL always wins; otherwise known providers map to their endpoint and
 // everything else falls through to the OpenAI default (empty).
-// ponytail: these all speak the OpenAI chat-completions API, so no separate client.
+// these all speak the OpenAI chat-completions API, so no separate client.
 func ResolveBaseURL(provider, baseURL string) string {
 	if baseURL != "" {
 		return baseURL

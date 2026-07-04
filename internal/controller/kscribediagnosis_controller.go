@@ -27,7 +27,7 @@ import (
 )
 
 // DiagnosisStore is the storage interface required by the reconciler.
-// ponytail: narrow interface — only what the reconciler uses, not the full *store.Store.
+// narrow interface — only what the reconciler uses, not the full *store.Store.
 type DiagnosisStore interface {
 	UpsertIncident(ctx context.Context, inc store.Incident) error
 	InsertDiagnosis(ctx context.Context, d store.Diagnosis, rcaPayload any) error
@@ -287,7 +287,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		})
 		metrics.DiagnosesTotal.WithLabelValues("failed").Inc()
 		r.publish(req.Namespace+"/"+req.Name, fmt.Sprintf(`<span data-phase="Failed">%s</span>`, kscribev1alpha1.DiagnosisPhaseFailed))
-		// ponytail: patchStatus retries on conflict so the Failed phase always lands,
+		// patchStatus retries on conflict so the Failed phase always lands,
 		// stopping the retry storm (provider-failure CR stays Diagnosing → requeues forever).
 		return ctrl.Result{}, r.patchStatus(ctx, req.NamespacedName, func(o *kscribev1alpha1.KscribeDiagnosis) {
 			o.Status.Phase = kscribev1alpha1.DiagnosisPhaseFailed

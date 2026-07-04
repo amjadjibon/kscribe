@@ -32,7 +32,7 @@ import (
 var scheme = runtime.NewScheme()
 
 // brokerPublisher adapts *web.Broker to controller.Publisher, avoiding an import cycle.
-// ponytail: thin adapter — no state beyond the broker reference.
+// thin adapter — no state beyond the broker reference.
 type brokerPublisher struct{ b *web.Broker }
 
 func (p *brokerPublisher) Publish(id, html string) { p.b.Publish(id, web.Event{HTML: html}) }
@@ -51,7 +51,7 @@ func main() {
 
 // runPruner loops hourly until ctx is done, deleting SQLite history rows and
 // terminal-phase KscribeDiagnosis CRs older than the retention window.
-// ponytail: per-replica, best-effort — errors are logged and retried next tick.
+// per-replica, best-effort — errors are logged and retried next tick.
 func runPruner(ctx context.Context, st *store.Store, c client.Client, retention time.Duration) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()

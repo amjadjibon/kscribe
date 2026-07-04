@@ -8,7 +8,7 @@ type Event struct {
 }
 
 // Broker fans out SSE events to per-incident subscribers.
-// ponytail: in-memory, per-replica. replicas:1 in MVP so no cross-replica delivery needed.
+// in-memory, per-replica. replicas:1 in MVP so no cross-replica delivery needed.
 type Broker struct {
 	mu   sync.Mutex
 	subs map[string]map[chan Event]struct{}
@@ -43,7 +43,7 @@ func (b *Broker) unsubscribe(incidentID string, ch chan Event) {
 
 // Publish sends an event to every subscriber of incidentID.
 // Drops the event for any subscriber whose buffer is full rather than blocking.
-// ponytail: non-blocking drop; add back-pressure/queue if throughput matters.
+// non-blocking drop; add back-pressure/queue if throughput matters.
 func (b *Broker) Publish(incidentID string, e Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

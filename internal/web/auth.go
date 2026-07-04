@@ -17,7 +17,7 @@ const authCookieName = "kscribe_token"
 const (
 	loginAttemptLimit  = 10
 	loginAttemptWindow = time.Minute
-	loginTrackedIPsMax = 1024 // ponytail: full reset when exceeded; an attacker churning IPs past this only resets budgets, never gains extra attempts within a window
+	loginTrackedIPsMax = 1024 // full reset when exceeded; an attacker churning IPs past this only resets budgets, never gains extra attempts within a window
 )
 
 // loginLimiter is a sliding window over failed login attempts, per client IP.
@@ -101,7 +101,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// ponytail: inline HTML login form — no templ component for a single static page.
+// inline HTML login form — no templ component for a single static page.
 const loginPage = `<!doctype html>
 <html><head><meta charset="utf-8"><title>kscribe — Login</title>
 <style>

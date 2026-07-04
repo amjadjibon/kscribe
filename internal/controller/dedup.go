@@ -10,11 +10,11 @@ import (
 
 const (
 	defaultDedupTTL  = time.Hour
-	dedupSweepThresh = 1024 // ponytail: sweep when map exceeds this; increase if event rate is very high
+	dedupSweepThresh = 1024 // sweep when map exceeds this; increase if event rate is very high
 )
 
 // Deduper is a TTL-based in-memory deduplication guard.
-// ponytail: per-replica scope — shared state needs a distributed cache (e.g. Redis) if replicas > 1 (CON-006).
+// per-replica scope — shared state needs a distributed cache (e.g. Redis) if replicas > 1 (CON-006).
 type Deduper struct {
 	mu   sync.Mutex
 	ttl  time.Duration

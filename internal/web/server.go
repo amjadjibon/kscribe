@@ -69,7 +69,7 @@ func (s *Server) Handler() http.Handler {
 		pr.Get("/incidents/{namespace}/{name}/stream", s.stream)
 		pr.Post("/incidents/{namespace}/{name}/chat", s.chatPost)
 		pr.Get("/incidents/{namespace}/{name}/chat/stream", s.chatStream)
-		// ponytail: inline cache header wrapper — no middleware stack needed for a single route
+		// inline cache header wrapper — no middleware stack needed for a single route
 		static := http.FileServer(http.FS(public.FS))
 		pr.Handle("/static/*", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

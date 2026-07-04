@@ -8,7 +8,7 @@ type ToolExecutor interface {
 }
 
 // KubeTools returns the minimal set of tool definitions the agent can call.
-// ponytail: fixed 3 tools (pod logs, events, node); extend if operators need more context sources.
+// fixed 3 tools (pod logs, events, node); extend if operators need more context sources.
 func KubeTools() []ToolDefinition {
 	return []ToolDefinition{
 		{

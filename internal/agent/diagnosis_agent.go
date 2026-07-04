@@ -27,7 +27,7 @@ type Outcome struct {
 }
 
 // DiagnosisAgent orchestrates an LLM tool-call loop to produce a root-cause analysis.
-// ponytail: no retry/backoff beyond one JSON repair; no provider plugin system.
+// no retry/backoff beyond one JSON repair; no provider plugin system.
 type DiagnosisAgent struct {
 	Provider Provider
 	Executor ToolExecutor // may be nil; tool calls return an error message if so

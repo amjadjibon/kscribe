@@ -6,7 +6,7 @@ import (
 )
 
 // RateLimiter is a sliding-window limiter capping diagnosis starts per hour.
-// ponytail: per-replica, stdlib only (CON-006) — mutex + timestamp slice;
+// per-replica, stdlib only (CON-006) — mutex + timestamp slice;
 // a distributed limiter is needed only if replicas > 1.
 type RateLimiter struct {
 	mu     sync.Mutex

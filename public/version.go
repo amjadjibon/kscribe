@@ -8,7 +8,7 @@ import (
 )
 
 // Version is a short content hash of all embedded assets, set once at init time.
-// ponytail: computed once at startup; changes whenever any file in FS changes.
+// computed once at startup; changes whenever any file in FS changes.
 var Version string
 
 func init() {

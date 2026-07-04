@@ -3,7 +3,7 @@ package enricher
 import "regexp"
 
 // rules are applied in order; each match is replaced with RedactedPlaceholder.
-// ponytail: pattern-based — truly custom secret formats with no recognizable
+// pattern-based — truly custom secret formats with no recognizable
 // shape are undetectable by regex; that residual ceiling is inherent.
 var rules = []*regexp.Regexp{
 	// Bearer tokens (Authorization: Bearer <token>)
