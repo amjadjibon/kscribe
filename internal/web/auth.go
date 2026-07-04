@@ -2,6 +2,7 @@ package web
 
 import (
 	"crypto/subtle"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -10,40 +11,56 @@ import (
 
 const authCookieName = "kscribe_token"
 
-// loginAttemptLimit / loginAttemptWindow bound failed login attempts.
-// ponytail: global window, not per-IP — an internal dashboard behind
-// ClusterIP doesn't warrant per-client tracking; switch to a per-IP map if
-// the dashboard is ever exposed publicly.
+// loginAttemptLimit / loginAttemptWindow bound failed login attempts per
+// client IP. RemoteAddr is used directly — X-Forwarded-For is deliberately
+// ignored since it is spoofable without a trusted proxy in front.
 const (
 	loginAttemptLimit  = 10
 	loginAttemptWindow = time.Minute
+	loginTrackedIPsMax = 1024 // ponytail: full reset when exceeded; an attacker churning IPs past this only resets budgets, never gains extra attempts within a window
 )
 
-// loginLimiter is a sliding window over failed login attempts.
+// loginLimiter is a sliding window over failed login attempts, per client IP.
 type loginLimiter struct {
 	mu       sync.Mutex
-	failures []time.Time
+	failures map[string][]time.Time
 }
 
-// tooMany reports whether the failed-attempt budget is exhausted.
-func (l *loginLimiter) tooMany() bool {
+// tooMany reports whether ip's failed-attempt budget is exhausted.
+func (l *loginLimiter) tooMany(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cutoff := time.Now().Add(-loginAttemptWindow)
-	keep := l.failures[:0]
-	for _, t := range l.failures {
+	keep := l.failures[ip][:0]
+	for _, t := range l.failures[ip] {
 		if t.After(cutoff) {
 			keep = append(keep, t)
 		}
 	}
-	l.failures = keep
-	return len(l.failures) >= loginAttemptLimit
+	if len(keep) == 0 {
+		delete(l.failures, ip)
+	} else {
+		l.failures[ip] = keep
+	}
+	return len(keep) >= loginAttemptLimit
 }
 
-func (l *loginLimiter) recordFailure() {
+func (l *loginLimiter) recordFailure(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.failures = append(l.failures, time.Now())
+	if l.failures == nil || len(l.failures) > loginTrackedIPsMax {
+		l.failures = make(map[string][]time.Time)
+	}
+	l.failures[ip] = append(l.failures[ip], time.Now())
+}
+
+// clientIP extracts the host part of RemoteAddr.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // tokenMatches compares a candidate against the configured token in constant
@@ -107,14 +124,14 @@ func (s *Server) loginForm(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
-	if s.loginAttempts.tooMany() {
+	if s.loginAttempts.tooMany(clientIP(r)) {
 		w.Header().Set("Retry-After", "60")
 		http.Error(w, "too many login attempts; try again later", http.StatusTooManyRequests)
 		return
 	}
 	_ = r.ParseForm()
 	if !s.tokenMatches(r.FormValue("token")) {
-		s.loginAttempts.recordFailure()
+		s.loginAttempts.recordFailure(clientIP(r))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(strings.Replace(loginPage, "%s", `<p class="err">Invalid token</p>`, 1)))

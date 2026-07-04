@@ -16,10 +16,10 @@ import (
 
 const defaultTailLines int64 = 100
 
-// maxPodsPerWorkload caps how many pods we fetch logs for when the involved
-// object is a Deployment or ReplicaSet.
-// ponytail: hard-coded to 3; make it a BuildSnapshot param if operators need tuning
-const maxPodsPerWorkload = 3
+// defaultMaxPodsPerWorkload caps how many pods we fetch logs for when the
+// involved object is a Deployment or ReplicaSet; override via BuildSnapshot's
+// maxPods param (KSCRIBE_MAX_PODS_PER_WORKLOAD).
+const defaultMaxPodsPerWorkload = 3
 
 // ObjectRef is the involved object from a Kubernetes event, carried into BuildSnapshot.
 type ObjectRef struct {
@@ -35,9 +35,12 @@ type ObjectRef struct {
 // Collection failures are recorded in Snapshot.Partial and do not abort the build (REQ-004).
 // c is used for all object reads; kcs is used only for pod log streaming
 // (controller-runtime client.Client cannot fetch logs).
-func BuildSnapshot(ctx context.Context, c client.Client, kcs kubernetes.Interface, ref ObjectRef, tailLines int64) (*Snapshot, error) {
+func BuildSnapshot(ctx context.Context, c client.Client, kcs kubernetes.Interface, ref ObjectRef, tailLines int64, maxPods int) (*Snapshot, error) {
 	if tailLines <= 0 {
 		tailLines = defaultTailLines
+	}
+	if maxPods <= 0 {
+		maxPods = defaultMaxPodsPerWorkload
 	}
 	s := &Snapshot{
 		EventUID:   ref.EventUID,
@@ -54,9 +57,9 @@ func BuildSnapshot(ctx context.Context, c client.Client, kcs kubernetes.Interfac
 	case strings.EqualFold(ref.Kind, "Pod"):
 		collectSinglePod(ctx, c, kcs, s, ref.Namespace, ref.Name, tailLines)
 	case strings.EqualFold(ref.Kind, "Deployment"):
-		collectDeployment(ctx, c, kcs, s, ref.Namespace, ref.Name, tailLines)
+		collectDeployment(ctx, c, kcs, s, ref.Namespace, ref.Name, tailLines, maxPods)
 	case strings.EqualFold(ref.Kind, "ReplicaSet"):
-		collectReplicaSet(ctx, c, kcs, s, ref.Namespace, ref.Name, tailLines)
+		collectReplicaSet(ctx, c, kcs, s, ref.Namespace, ref.Name, tailLines, maxPods)
 	default:
 		s.Partial = append(s.Partial, fmt.Sprintf("pod context: unsupported object kind %q", ref.Kind))
 	}
@@ -99,7 +102,7 @@ func collectSinglePod(ctx context.Context, c client.Client, kcs kubernetes.Inter
 	}
 }
 
-func collectDeployment(ctx context.Context, c client.Client, kcs kubernetes.Interface, s *Snapshot, ns, name string, tail int64) {
+func collectDeployment(ctx context.Context, c client.Client, kcs kubernetes.Interface, s *Snapshot, ns, name string, tail int64, maxPods int) {
 	var dep appsv1.Deployment
 	if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, &dep); err != nil {
 		s.Partial = append(s.Partial, fmt.Sprintf("deployment %s/%s: %v", ns, name, err))
@@ -116,12 +119,12 @@ func collectDeployment(ctx context.Context, c client.Client, kcs kubernetes.Inte
 		}
 		s.DeploymentStatus = ds
 		if dep.Spec.Selector != nil {
-			collectPodsForSelector(ctx, c, kcs, s, ns, dep.Spec.Selector, tail)
+			collectPodsForSelector(ctx, c, kcs, s, ns, dep.Spec.Selector, tail, maxPods)
 		}
 	}
 }
 
-func collectReplicaSet(ctx context.Context, c client.Client, kcs kubernetes.Interface, s *Snapshot, ns, name string, tail int64) {
+func collectReplicaSet(ctx context.Context, c client.Client, kcs kubernetes.Interface, s *Snapshot, ns, name string, tail int64, maxPods int) {
 	var rs appsv1.ReplicaSet
 	if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, &rs); err != nil {
 		s.Partial = append(s.Partial, fmt.Sprintf("replicaset %s/%s: %v", ns, name, err))
@@ -137,12 +140,12 @@ func collectReplicaSet(ctx context.Context, c client.Client, kcs kubernetes.Inte
 		}
 		s.ReplicaSetStatus = rss
 		if rs.Spec.Selector != nil {
-			collectPodsForSelector(ctx, c, kcs, s, ns, rs.Spec.Selector, tail)
+			collectPodsForSelector(ctx, c, kcs, s, ns, rs.Spec.Selector, tail, maxPods)
 		}
 	}
 }
 
-func collectPodsForSelector(ctx context.Context, c client.Client, kcs kubernetes.Interface, s *Snapshot, ns string, sel *metav1.LabelSelector, tail int64) {
+func collectPodsForSelector(ctx context.Context, c client.Client, kcs kubernetes.Interface, s *Snapshot, ns string, sel *metav1.LabelSelector, tail int64, maxPods int) {
 	selector, err := metav1.LabelSelectorAsSelector(sel)
 	if err != nil {
 		s.Partial = append(s.Partial, fmt.Sprintf("label selector: %v", err))
@@ -154,7 +157,7 @@ func collectPodsForSelector(ctx context.Context, c client.Client, kcs kubernetes
 		return
 	}
 	for i := range podList.Items {
-		if i >= maxPodsPerWorkload {
+		if i >= maxPods {
 			break
 		}
 		pod := &podList.Items[i]

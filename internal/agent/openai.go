@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -28,7 +29,9 @@ type streamChunk struct {
 
 // OpenAIClient is an OpenAI-compatible chat-completions provider.
 // JSON via stdlib encoding/json.
-// ponytail: single endpoint, no streaming, no retry beyond caller's JSON repair.
+// Complete retries transient failures via the SDK (2 retries with backoff);
+// CompleteStream retries the initial connection only — never mid-stream.
+// ponytail: single endpoint; malformed-JSON recovery stays in the caller's repair turn.
 type OpenAIClient struct {
 	BaseURL    string
 	APIKey     string
@@ -58,7 +61,8 @@ func NewOpenAIClient(baseURL, apiKey, model string) *OpenAIClient {
 // normalizes a non-slash-terminated path (so a Gemini-style
 // .../v1beta/openai base still POSTs to .../v1beta/openai/chat/completions).
 func (c *OpenAIClient) sdkClient() openai.Client {
-	opts := []option.RequestOption{option.WithBaseURL(c.BaseURL)}
+	// Explicit transient-failure retries (429/5xx/connect) with SDK backoff.
+	opts := []option.RequestOption{option.WithBaseURL(c.BaseURL), option.WithMaxRetries(2)}
 	if c.APIKey != "" {
 		opts = append(opts, option.WithAPIKey(c.APIKey))
 	}
@@ -196,7 +200,26 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req Request, onDelta 
 		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 
-	resp, err := c.HTTPClient.Do(httpReq)
+	// Retry the initial connection on transport errors and retryable statuses
+	// (429/5xx). Safe because no delta has been delivered yet; once streaming
+	// starts there is no retry — a partial stream surfaces as an error.
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		httpReq.Body, _ = httpReq.GetBody()
+		resp, err = c.HTTPClient.Do(httpReq)
+		retryable := err != nil || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		if !retryable || attempt >= 2 {
+			break
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return Response{}, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		}
+	}
 	if err != nil {
 		return Response{}, fmt.Errorf("http: %w", err)
 	}

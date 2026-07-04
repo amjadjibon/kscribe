@@ -42,18 +42,19 @@ type Publisher interface {
 // KscribeDiagnosisReconciler reconciles KscribeDiagnosis objects.
 type KscribeDiagnosisReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	Store         DiagnosisStore
-	AgentProvider agent.Provider
-	Publisher     Publisher // may be nil; no-op when absent
-	LLMProvider   string    // operator default; CR spec override wins
-	LLMModel      string    // operator default; CR spec override wins
-	MaxIter       int       // default max tool-call iterations; overridable via CR spec
-	Concurrency   int       // MaxConcurrentReconciles; 0 defaults to 1
-	Tools         []agent.ToolDefinition
-	ToolExecutor  agent.ToolExecutor   // nil falls back to stub error in agent loop
-	KubeClient    kubernetes.Interface // nil → falls back to minimal spec-only snapshot
-	RateLimiter   *RateLimiter         // nil = unlimited diagnosis starts
+	Scheme             *runtime.Scheme
+	Store              DiagnosisStore
+	AgentProvider      agent.Provider
+	Publisher          Publisher // may be nil; no-op when absent
+	LLMProvider        string    // operator default; CR spec override wins
+	LLMModel           string    // operator default; CR spec override wins
+	MaxIter            int       // default max tool-call iterations; overridable via CR spec
+	Concurrency        int       // MaxConcurrentReconciles; 0 defaults to 1
+	Tools              []agent.ToolDefinition
+	ToolExecutor       agent.ToolExecutor   // nil falls back to stub error in agent loop
+	KubeClient         kubernetes.Interface // nil → falls back to minimal spec-only snapshot
+	RateLimiter        *RateLimiter         // nil = unlimited diagnosis starts
+	MaxPodsPerWorkload int                  // <=0 = enricher default (3)
 }
 
 const diagnosingRecoveryAfter = 10 * time.Minute
@@ -226,7 +227,7 @@ func (r *KscribeDiagnosisReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	var snap *enricher.Snapshot
 	if r.KubeClient != nil {
 		var buildErr error
-		snap, buildErr = enricher.BuildSnapshot(ctx, r.Client, r.KubeClient, ref, 100)
+		snap, buildErr = enricher.BuildSnapshot(ctx, r.Client, r.KubeClient, ref, 100, r.MaxPodsPerWorkload)
 		if buildErr != nil {
 			logger.Info("BuildSnapshot failed, using minimal snapshot", "error", buildErr)
 			snap = nil

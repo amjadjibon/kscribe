@@ -57,6 +57,8 @@ spec:
           value: {{ .Values.retentionPeriod | quote }}
         - name: KSCRIBE_MAX_DIAGNOSES_PER_HOUR
           value: {{ .Values.maxDiagnosesPerHour | quote }}
+        - name: KSCRIBE_MAX_PODS_PER_WORKLOAD
+          value: {{ .Values.maxPodsPerWorkload | quote }}
         - name: KSCRIBE_METRICS_ADDR
           value: {{ .Values.metrics.enabled | ternary (printf ":%v" .Values.metrics.port) "0" | quote }}
         {{- if or .Values.dashboard.token .Values.dashboard.existingSecret }}

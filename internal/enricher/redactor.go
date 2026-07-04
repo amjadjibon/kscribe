@@ -3,8 +3,8 @@ package enricher
 import "regexp"
 
 // rules are applied in order; each match is replaced with RedactedPlaceholder.
-// ponytail: covers common patterns; deeply nested JSON/YAML values and custom
-// secret formats are not detected — extend rules if scope grows.
+// ponytail: pattern-based — truly custom secret formats with no recognizable
+// shape are undetectable by regex; that residual ceiling is inherent.
 var rules = []*regexp.Regexp{
 	// Bearer tokens (Authorization: Bearer <token>)
 	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*`),
@@ -18,6 +18,18 @@ var rules = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)[a-z][a-z0-9+\-.]*://[^:@\s/"']+:[^@\s/"']+@\S+`),
 	// k=v or k: v patterns for common secret key names
 	regexp.MustCompile(`(?i)(?:api[-_]?key|secret|token|password|passwd|credential|auth[-_]?token)\s*[=:]\s*\S+`),
+	// JSON-quoted values for common secret key names ("password": "hunter2")
+	regexp.MustCompile(`(?i)"(?:api[-_]?key|secret|token|password|passwd|credential|auth[-_]?token)"\s*:\s*"[^"]*"`),
+	// JWTs (three base64url segments starting with eyJ)
+	regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+`),
+	// GitHub tokens (classic + fine-grained)
+	regexp.MustCompile(`(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})`),
+	// Google API keys
+	regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`),
+	// Slack tokens
+	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),
+	// AWS secret access keys assigned to a recognizable key name
+	regexp.MustCompile(`(?i)aws[-_]?secret[-_]?access[-_]?key\s*[=:]\s*\S+`),
 }
 
 // sensitiveEnvKey matches env var names that conventionally hold secrets.

@@ -193,3 +193,32 @@ func TestStreamOrComplete_OnDeltaError_NonStreaming(t *testing.T) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
 }
+
+// TestCompleteStream_RetriesTransientThenSucceeds asserts a 500 on the first
+// connection attempt is retried and the stream succeeds on the second.
+func TestCompleteStream_RetriesTransientThenSucceeds(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer srv.Close()
+
+	c := NewOpenAIClient(srv.URL, "", "m")
+	resp, err := c.CompleteStream(context.Background(), Request{}, func(string) error { return nil })
+	if err != nil {
+		t.Fatalf("CompleteStream after retry: %v", err)
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2", attempts)
+	}
+	if resp.Choices[0].Message.Content != "ok" {
+		t.Errorf("content = %q, want ok", resp.Choices[0].Message.Content)
+	}
+}

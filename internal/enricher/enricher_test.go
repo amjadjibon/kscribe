@@ -38,7 +38,7 @@ func TestBuildSnapshot_PodNotFound(t *testing.T) {
 		EventUID:  "uid-1",
 		Reason:    "BackOff",
 		Message:   "back-off restarting failed container",
-	}, 0)
+	}, 0, 0)
 
 	if err != nil {
 		t.Fatalf("BuildSnapshot returned error: %v", err)
@@ -82,7 +82,7 @@ func TestBuildSnapshot_PartialNodeMissing(t *testing.T) {
 		EventUID:  "uid-2",
 		Reason:    "OOMKilling",
 		Message:   "OOM killed",
-	}, 50)
+	}, 50, 0)
 
 	if err != nil {
 		t.Fatalf("BuildSnapshot returned error: %v", err)
@@ -329,6 +329,30 @@ func TestNoSonic(t *testing.T) {
 		}
 		if strings.Contains(string(b), "bytedance/sonic") {
 			t.Errorf("file %s imports sonic — use stdlib encoding/json", e.Name())
+		}
+	}
+}
+
+// TestRedactExtendedPatterns covers the JSON-quoted, JWT, and vendor token rules.
+func TestRedactExtendedPatterns(t *testing.T) {
+	// Fixture tokens are concatenated at runtime so this file never contains a
+	// literal that trips secret scanners (including GitHub push protection).
+	cases := map[string]string{
+		"json password":  `{"password": "hunter2", "user": "bob"}`,
+		"json apiKey":    `{"api_key":"sk-abcdef123456"}`,
+		"jwt":            "token " + "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "dozjgNryP4J3jVmNHl0w5N" + "_XgL0n3I9PlFUP0THsR8U in log",
+		"github classic": "pushed with " + "ghp" + "_abcdefghijklmnopqrstuvwxyz0123456789",
+		"github pat":     "github" + "_pat" + "_11ABCDEFG0123456789" + "_abcdefghijklmnopqrstuv",
+		"google api key": "key=" + "AIza" + "SyA-1234567890abcdefghijklmnopqrstu",
+		"slack":          "xoxb" + "-123456789012" + "-abcdefghijklmnop",
+	}
+	for name, in := range cases {
+		got := enricher.Redact(in)
+		if got == in {
+			t.Errorf("%s: not redacted: %q", name, in)
+		}
+		if !strings.Contains(got, enricher.RedactedPlaceholder) {
+			t.Errorf("%s: placeholder missing in %q", name, got)
 		}
 	}
 }

@@ -197,19 +197,20 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 
 			// KscribeDiagnosis reconciler.
 			reconciler := &controller.KscribeDiagnosisReconciler{
-				Client:        mgr.GetClient(),
-				Scheme:        mgr.GetScheme(),
-				Store:         st,
-				AgentProvider: provider,
-				Publisher:     &brokerPublisher{b: broker},
-				LLMProvider:   cfg.LLMProvider,
-				LLMModel:      cfg.LLMModel,
-				MaxIter:       cfg.MaxIterations,
-				Concurrency:   cfg.DiagnosisConcurrency,
-				Tools:         agent.KubeTools(),
-				KubeClient:    kcs,
-				ToolExecutor:  &controller.KubeToolExecutor{Client: mgr.GetClient(), Kube: kcs},
-				RateLimiter:   controller.NewRateLimiter(cfg.MaxDiagnosesPerHour),
+				Client:             mgr.GetClient(),
+				Scheme:             mgr.GetScheme(),
+				Store:              st,
+				AgentProvider:      provider,
+				Publisher:          &brokerPublisher{b: broker},
+				LLMProvider:        cfg.LLMProvider,
+				LLMModel:           cfg.LLMModel,
+				MaxIter:            cfg.MaxIterations,
+				Concurrency:        cfg.DiagnosisConcurrency,
+				Tools:              agent.KubeTools(),
+				KubeClient:         kcs,
+				ToolExecutor:       &controller.KubeToolExecutor{Client: mgr.GetClient(), Kube: kcs},
+				RateLimiter:        controller.NewRateLimiter(cfg.MaxDiagnosesPerHour),
+				MaxPodsPerWorkload: cfg.MaxPodsPerWorkload,
 			}
 			if err := reconciler.SetupWithManager(mgr); err != nil {
 				return fmt.Errorf("setup diagnosis reconciler: %w", err)

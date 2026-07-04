@@ -61,6 +61,10 @@ type Config struct {
 	// SEC-001: never logged.
 	DashboardToken string `env:"KSCRIBE_DASHBOARD_TOKEN" envDefault:""`
 
+	// MaxPodsPerWorkload caps how many pods get log-enriched when a diagnosis
+	// targets a Deployment/ReplicaSet. Bounds context size and LLM cost.
+	MaxPodsPerWorkload int `env:"KSCRIBE_MAX_PODS_PER_WORKLOAD" envDefault:"3"`
+
 	// ResyncPeriod is how often the controller re-syncs watched resources.
 	ResyncPeriod time.Duration `env:"KSCRIBE_RESYNC_PERIOD" envDefault:"10m"`
 }

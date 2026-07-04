@@ -66,6 +66,9 @@ metrics:
 # event storms). 0 = unlimited; over-limit diagnoses stay Pending and retry.
 maxDiagnosesPerHour: 30
 
+# Max pods log-enriched per Deployment/ReplicaSet diagnosis (context/cost bound).
+maxPodsPerWorkload: 3
+
 dashboard:
   # Static bearer token protecting the dashboard (empty = auth disabled).
   # Provide inline (a Secret is created) OR point at an existing Secret.

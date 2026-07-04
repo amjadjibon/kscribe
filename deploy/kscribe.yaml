@@ -634,6 +634,8 @@ spec:
           value: "720h"
         - name: KSCRIBE_MAX_DIAGNOSES_PER_HOUR
           value: "30"
+        - name: KSCRIBE_MAX_PODS_PER_WORKLOAD
+          value: "3"
         - name: KSCRIBE_METRICS_ADDR
           value: ":9090"
         ports:
