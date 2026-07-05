@@ -17,7 +17,7 @@ last_review_base: ''
 
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
-| 1 | — | — | — | — | — | — | — |
+| 1 | Approve | 0 | 0 | 0 | 2 | sequential (inline) | clean exit |
 
 ## Stacked PRs
 
@@ -35,7 +35,7 @@ last_review_base: ''
 
 ### Iteration 1
 
-- [ ] implement-plan
-- [ ] qa
-- [ ] code-review
-- [ ] decide
+- [x] implement-plan
+- [x] qa
+- [x] code-review
+- [x] decide — Approve (2 Low, accepted); awaiting push approval

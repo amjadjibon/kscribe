@@ -4,13 +4,13 @@ version: 1.0
 date_created: 2026-07-05
 last_updated: 2026-07-05
 owner: amjadjibon
-status: 'Planned'
+status: 'Completed'
 tags: [feature]
 ---
 
 # Slack Notifications
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 Post the RCA to a Slack channel via an incoming webhook when a diagnosis finishes, alongside (or instead of) the existing Resend email notifications. Off by default; enabled by setting a webhook URL.
 
@@ -32,11 +32,11 @@ Post the RCA to a Slack channel via an incoming webhook when a diagnosis finishe
 
 **Goal**: Structured notification pipeline with Slack + email renderers, fully tested, unwired.
 
-- [ ] TASK-001: `internal/notify/notification.go` — `type Notification struct { Phase, Reason, Namespace, Object, Summary, RootCause string; Remediation []string }`.
-- [ ] TASK-002: Change `Resend.Notify` to `Notify(ctx, n Notification) error` rendering subject/HTML internally (reuse `Subject`/`HTML`). Update `internal/controller` `Notifier` interface + `notifyTerminal` to build a `Notification`; update reconciler test's fake.
-- [ ] TASK-003: `internal/notify/slack.go` — `type Slack struct { WebhookURL string; HTTPClient *http.Client }` with `Notify(ctx, n Notification) error` POSTing `{"text": <mrkdwn>}`; mrkdwn body mirrors the email content (`*[kscribe] Failed: OOMKilling prod/worker-1*` + fields). Non-2xx → error with status + ≤512B body. Escape Slack control entities (`&`, `<`, `>`).
-- [ ] TASK-004: `internal/notify/multi.go` — `Multi(notifiers ...Notifier) Notifier` fan-out that calls every notifier and joins errors (`errors.Join`); define `type Notifier interface` in notify so controller can alias it.
-- [ ] TASK-005: Tests — slack payload/escaping/error-truncation via httptest; Multi delivers to all despite one failing.
+- [x] TASK-001: `internal/notify/notification.go` — `type Notification struct { Phase, Reason, Namespace, Object, Summary, RootCause string; Remediation []string }`.
+- [x] TASK-002: Change `Resend.Notify` to `Notify(ctx, n Notification) error` rendering subject/HTML internally (reuse `Subject`/`HTML`). Update `internal/controller` `Notifier` interface + `notifyTerminal` to build a `Notification`; update reconciler test's fake.
+- [x] TASK-003: `internal/notify/slack.go` — `type Slack struct { WebhookURL string; HTTPClient *http.Client }` with `Notify(ctx, n Notification) error` POSTing `{"text": <mrkdwn>}`; mrkdwn body mirrors the email content (`*[kscribe] Failed: OOMKilling prod/worker-1*` + fields). Non-2xx → error with status + ≤512B body. Escape Slack control entities (`&`, `<`, `>`).
+- [x] TASK-004: `internal/notify/multi.go` — `Multi(notifiers ...Notifier) Notifier` fan-out that calls every notifier and joins errors (`errors.Join`); define `type Notifier interface` in notify so controller can alias it.
+- [x] TASK-005: Tests — slack payload/escaping/error-truncation via httptest; Multi delivers to all despite one failing.
 
 **Completion criteria**: `go test ./internal/notify/ ./internal/controller/` passes; `go build ./...` green.
 
@@ -91,10 +91,10 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 **Depends on**: Phase 1 complete
 
-- [ ] TASK-006: `internal/config/config.go` — `SlackWebhookURL` (`KSCRIBE_SLACK_WEBHOOK_URL`, default "").
-- [ ] TASK-007: `cmd/kscribe/main.go` — build a notifier list (Resend when key+recipients; Slack when webhook set); 0 → nil, 1 → it, 2+ → `notify.Multi(...)`. Log which channels are enabled (names only).
-- [ ] TASK-008: Chart — `notifications.slack.webhookUrl` / `existingSecret` / `existingSecretKey` (`slack-webhook-url`), Secret + helpers + deployment env (secretKeyRef, guarded); regenerate manifest; rows in chart README + main README production table.
-- [ ] TASK-009: Reconciler notify test still passes (interface changed in Phase 1); add a Multi-in-reconciler smoke via the fake if not already covered.
+- [x] TASK-006: `internal/config/config.go` — `SlackWebhookURL` (`KSCRIBE_SLACK_WEBHOOK_URL`, default "").
+- [x] TASK-007: `cmd/kscribe/main.go` — build a notifier list (Resend when key+recipients; Slack when webhook set); 0 → nil, 1 → it, 2+ → `notify.Multi(...)`. Log which channels are enabled (names only).
+- [x] TASK-008: Chart — `notifications.slack.webhookUrl` / `existingSecret` / `existingSecretKey` (`slack-webhook-url`), Secret + helpers + deployment env (secretKeyRef, guarded); regenerate manifest; rows in chart README + main README production table.
+- [x] TASK-009: Reconciler notify test still passes (interface changed in Phase 1); add a Multi-in-reconciler smoke via the fake if not already covered.
 
 **Completion criteria**: `go test ./...` passes; `helm template charts/kscribe --set notifications.slack.webhookUrl=https://hooks.slack.com/x` renders `KSCRIBE_SLACK_WEBHOOK_URL` via secretKeyRef.
 
