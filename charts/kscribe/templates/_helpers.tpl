@@ -90,3 +90,20 @@ dashboard-token
 resend-api-key
 {{- end -}}
 {{- end -}}
+
+{{/* Name of the Secret holding the Slack webhook URL. */}}
+{{- define "kscribe.slackSecretName" -}}
+{{- if .Values.notifications.slack.existingSecret -}}
+{{- .Values.notifications.slack.existingSecret -}}
+{{- else -}}
+{{- printf "%s-slack" (include "kscribe.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "kscribe.slackSecretKey" -}}
+{{- if .Values.notifications.slack.existingSecret -}}
+{{- .Values.notifications.slack.existingSecretKey -}}
+{{- else -}}
+slack-webhook-url
+{{- end -}}
+{{- end -}}

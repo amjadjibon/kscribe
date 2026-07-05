@@ -76,6 +76,10 @@ type Config struct {
 	// Comma-separated in env form. Empty disables notifications.
 	NotifyEmailTo []string `env:"KSCRIBE_NOTIFY_EMAIL_TO" envSeparator:"," envDefault:""`
 
+	// SlackWebhookURL enables Slack notifications via an incoming webhook
+	// when set. The URL is a credential — SEC-001: never logged.
+	SlackWebhookURL string `env:"KSCRIBE_SLACK_WEBHOOK_URL" envDefault:""`
+
 	// ResyncPeriod is how often the controller re-syncs watched resources.
 	ResyncPeriod time.Duration `env:"KSCRIBE_RESYNC_PERIOD" envDefault:"10m"`
 }

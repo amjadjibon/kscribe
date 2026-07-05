@@ -74,6 +74,13 @@ spec:
         - name: KSCRIBE_NOTIFY_EMAIL_TO
           value: {{ join "," .Values.notifications.to | quote }}
         {{- end }}
+        {{- if or .Values.notifications.slack.webhookUrl .Values.notifications.slack.existingSecret }}
+        - name: KSCRIBE_SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "kscribe.slackSecretName" . }}
+              key: {{ include "kscribe.slackSecretKey" . }}
+        {{- end }}
         {{- if or .Values.dashboard.token .Values.dashboard.existingSecret }}
         - name: KSCRIBE_DASHBOARD_TOKEN
           valueFrom:

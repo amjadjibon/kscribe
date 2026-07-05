@@ -80,6 +80,12 @@ notifications:
     existingSecretKey: resend-api-key
   from: kscribe@notifications.local
   to: []
+  # Slack incoming webhook (the URL is a credential; a Secret is created,
+  # or point at an existing one). Composes with email when both are set.
+  slack:
+    webhookUrl: ""
+    existingSecret: ""
+    existingSecretKey: slack-webhook-url
 
 dashboard:
   # Static bearer token protecting the dashboard (empty = auth disabled).
