@@ -49,6 +49,7 @@ kscribe sends enriched, redacted cluster context (event messages, pod metadata, 
 | Dashboard auth | `KSCRIBE_DASHBOARD_TOKEN` | `dashboard.token` / `dashboard.existingSecret` | off | Static bearer token (`Authorization: Bearer …` or login cookie). Use a high-entropy token (e.g. `openssl rand -hex 32`); failed logins are throttled to 10/min. `/healthz` stays open. |
 | LLM cost cap | `KSCRIBE_MAX_DIAGNOSES_PER_HOUR` | `maxDiagnosesPerHour` | `30` | Global cap on diagnosis starts per hour. Over-limit CRs stay `Pending` and retry with jitter — nothing is dropped. `0` = unlimited. |
 | Email notifications | `KSCRIBE_RESEND_API_KEY` / `KSCRIBE_NOTIFY_EMAIL_TO` | `notifications.resend.*` / `notifications.to` | off | Emails the RCA (summary, root cause, remediation) via [Resend](https://resend.com) on every finished diagnosis. Best-effort: failures are logged and counted (`kscribe_notifications_total`), never block reconciles. |
+| Slack notifications | `KSCRIBE_SLACK_WEBHOOK_URL` | `notifications.slack.*` | off | Posts the RCA to a Slack channel via an [incoming webhook](https://api.slack.com/messaging/webhooks). Same best-effort semantics; composes with email when both are set. |
 
 ---
 

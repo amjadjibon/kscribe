@@ -44,6 +44,7 @@ key is optional at install time.
 | `maxDiagnosesPerHour` | `30` | Global LLM cost cap; over-limit CRs stay Pending and retry; `0` = unlimited |
 | `notifications.resend.apiKey` | `""` (off) | Resend API key for email notifications; creates a Secret |
 | `notifications.to` / `notifications.from` | `[]` / `kscribe@notifications.local` | Recipients (required to enable) and sender |
+| `notifications.slack.webhookUrl` | `""` (off) | Slack incoming webhook; creates a Secret; composes with email |
 
 ## CRDs
 

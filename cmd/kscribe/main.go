@@ -213,13 +213,29 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				RateLimiter:        controller.NewRateLimiter(cfg.MaxDiagnosesPerHour),
 				MaxPodsPerWorkload: cfg.MaxPodsPerWorkload,
 			}
+			var notifiers []notify.Notifier
+			var channels []string
 			if cfg.ResendAPIKey != "" && len(cfg.NotifyEmailTo) > 0 {
-				reconciler.Notifier = &notify.Resend{
+				notifiers = append(notifiers, &notify.Resend{
 					APIKey: cfg.ResendAPIKey,
 					From:   cfg.NotifyEmailFrom,
 					To:     cfg.NotifyEmailTo,
-				}
-				slog.Info("email notifications enabled", "recipients", len(cfg.NotifyEmailTo))
+				})
+				channels = append(channels, "email")
+			}
+			if cfg.SlackWebhookURL != "" {
+				notifiers = append(notifiers, &notify.Slack{WebhookURL: cfg.SlackWebhookURL})
+				channels = append(channels, "slack")
+			}
+			switch len(notifiers) {
+			case 0:
+			case 1:
+				reconciler.Notifier = notifiers[0]
+			default:
+				reconciler.Notifier = notify.Multi(notifiers...)
+			}
+			if len(channels) > 0 {
+				slog.Info("notifications enabled", "channels", channels)
 			}
 			if err := reconciler.SetupWithManager(mgr); err != nil {
 				return fmt.Errorf("setup diagnosis reconciler: %w", err)

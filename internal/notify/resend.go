@@ -30,8 +30,10 @@ type emailRequest struct {
 	HTML    string   `json:"html"`
 }
 
-// Notify implements the reconciler's Notifier interface.
-func (r *Resend) Notify(ctx context.Context, subject, html string) error {
+// Notify renders and sends the notification as email.
+func (r *Resend) Notify(ctx context.Context, n Notification) error {
+	subject := Subject(n.Phase, n.Reason, n.Namespace, n.Object)
+	html := HTML(n.Phase, n.Reason, n.Namespace, n.Object, n.Summary, n.RootCause, n.Remediation)
 	return r.Send(ctx, subject, html)
 }
 
