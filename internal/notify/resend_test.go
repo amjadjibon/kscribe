@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -68,5 +69,75 @@ func TestSubject(t *testing.T) {
 	got := Subject("Failed", "OOMKilling", "prod", "worker-1")
 	if got != "[kscribe] Failed: OOMKilling prod/worker-1" {
 		t.Errorf("Subject = %q", got)
+	}
+}
+
+func TestSlackNotify(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := &Slack{WebhookURL: srv.URL}
+	err := s.Notify(context.Background(), Notification{
+		Phase: "Failed", Reason: "OOMKilling", Namespace: "prod", Object: "worker-1",
+		Summary: "a <b> & c", RootCause: "limits", Remediation: []string{"raise memory"},
+	})
+	if err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	text := got["text"]
+	for _, want := range []string{"*[kscribe] Failed: OOMKilling prod/worker-1*", "a &lt;b&gt; &amp; c", "1. raise memory", "*Root cause:* limits"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "<b>") {
+		t.Error("unescaped angle brackets in slack text")
+	}
+}
+
+func TestSlackNotifyError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(strings.Repeat("y", 2048)))
+	}))
+	defer srv.Close()
+
+	s := &Slack{WebhookURL: srv.URL}
+	err := s.Notify(context.Background(), Notification{})
+	if err == nil || !strings.Contains(err.Error(), "slack error 404") {
+		t.Fatalf("err = %v, want slack error 404", err)
+	}
+	if len(err.Error()) > 600 {
+		t.Errorf("error not truncated: %d bytes", len(err.Error()))
+	}
+}
+
+// failNotifier always errors; used to prove Multi keeps going.
+type failNotifier struct{ called bool }
+
+func (f *failNotifier) Notify(context.Context, Notification) error {
+	f.called = true
+	return errors.New("boom")
+}
+
+type okNotifier struct{ called bool }
+
+func (o *okNotifier) Notify(context.Context, Notification) error {
+	o.called = true
+	return nil
+}
+
+func TestMultiCallsAllDespiteFailure(t *testing.T) {
+	f, o := &failNotifier{}, &okNotifier{}
+	err := Multi(f, o).Notify(context.Background(), Notification{})
+	if !f.called || !o.called {
+		t.Fatalf("all notifiers must be called: fail=%v ok=%v", f.called, o.called)
+	}
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("joined error missing failure: %v", err)
 	}
 }

@@ -22,6 +22,7 @@ import (
 
 	kscribev1alpha1 "github.com/amjadjibon/kscribe/api/v1alpha1"
 	"github.com/amjadjibon/kscribe/internal/agent"
+	"github.com/amjadjibon/kscribe/internal/notify"
 	"github.com/amjadjibon/kscribe/internal/controller"
 	"github.com/amjadjibon/kscribe/internal/store"
 )
@@ -709,11 +710,11 @@ func TestReconcile_RateLimited(t *testing.T) {
 // fakeNotifier records notifications and signals via channel (send is async).
 type fakeNotifier struct {
 	err   error
-	calls chan [2]string // subject, html
+	calls chan notify.Notification
 }
 
-func (f *fakeNotifier) Notify(_ context.Context, subject, html string) error {
-	f.calls <- [2]string{subject, html}
+func (f *fakeNotifier) Notify(_ context.Context, n notify.Notification) error {
+	f.calls <- n
 	return f.err
 }
 
@@ -733,7 +734,7 @@ func TestReconcile_NotifiesOnTerminal(t *testing.T) {
 			kd := newKD("diag-notify", "default")
 			fc := buildClient(scheme, kd).Build()
 
-			fn := &fakeNotifier{err: tc.notifyErr, calls: make(chan [2]string, 2)}
+			fn := &fakeNotifier{err: tc.notifyErr, calls: make(chan notify.Notification, 2)}
 			r := reconcilerFor(&fakeStore{}, goodProvider())
 			r.Client = fc
 			r.Notifier = fn
@@ -747,11 +748,11 @@ func TestReconcile_NotifiesOnTerminal(t *testing.T) {
 
 			select {
 			case call := <-fn.calls:
-				if !strings.Contains(call[0], "BackOff") {
-					t.Errorf("subject = %q, want reason BackOff", call[0])
+				if call.Reason != "BackOff" {
+					t.Errorf("reason = %q, want BackOff", call.Reason)
 				}
-				if !strings.Contains(call[1], "test summary") {
-					t.Errorf("html missing RCA summary: %q", call[1])
+				if call.Summary != "test summary" {
+					t.Errorf("summary = %q, want RCA summary", call.Summary)
 				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("no notification within 2s")

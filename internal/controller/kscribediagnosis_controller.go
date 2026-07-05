@@ -34,11 +34,9 @@ type DiagnosisStore interface {
 	InsertDiagnosis(ctx context.Context, d store.Diagnosis, rcaPayload any) error
 }
 
-// Notifier delivers a diagnosis-result notification (e.g. email via Resend).
-// Implemented by *notify.Resend; nil disables notifications.
-type Notifier interface {
-	Notify(ctx context.Context, subject, html string) error
-}
+// Notifier delivers a diagnosis-result notification (email, Slack, or a
+// notify.Multi fanout); nil disables notifications.
+type Notifier = notify.Notifier
 
 // Publisher is the SSE producer interface. *web.Broker satisfies this via a thin adapter
 // in main.go to avoid an import cycle (MED-002). html is a pre-rendered HTML fragment.
@@ -75,13 +73,20 @@ func (r *KscribeDiagnosisReconciler) notifyTerminal(kd *kscribev1alpha1.KscribeD
 	if r.Notifier == nil {
 		return
 	}
-	subject := notify.Subject(string(phase), kd.Spec.Reason, kd.Spec.InvolvedObjectNamespace, kd.Spec.InvolvedObjectName)
-	html := notify.HTML(string(phase), kd.Spec.Reason, kd.Spec.InvolvedObjectNamespace, kd.Spec.InvolvedObjectName, summary, rootCause, remediation)
+	n := notify.Notification{
+		Phase:       string(phase),
+		Reason:      kd.Spec.Reason,
+		Namespace:   kd.Spec.InvolvedObjectNamespace,
+		Object:      kd.Spec.InvolvedObjectName,
+		Summary:     summary,
+		RootCause:   rootCause,
+		Remediation: remediation,
+	}
 	name, ns := kd.Name, kd.Namespace
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := r.Notifier.Notify(ctx, subject, html); err != nil {
+		if err := r.Notifier.Notify(ctx, n); err != nil {
 			metrics.NotificationsTotal.WithLabelValues("failed").Inc()
 			log.Log.Error(err, "notification send failed", "namespace", ns, "name", name)
 			return
