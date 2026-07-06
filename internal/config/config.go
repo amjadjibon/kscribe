@@ -80,6 +80,18 @@ type Config struct {
 	// when set. The URL is a credential — SEC-001: never logged.
 	SlackWebhookURL string `env:"KSCRIBE_SLACK_WEBHOOK_URL" envDefault:""`
 
+	// JiraBaseURL and JiraProjectKey enable Jira ticket creation when both
+	// are set. JiraAPIToken is a credential — SEC-001: never logged.
+	JiraBaseURL    string `env:"KSCRIBE_JIRA_BASE_URL"    envDefault:""`
+	JiraEmail      string `env:"KSCRIBE_JIRA_EMAIL"       envDefault:""`
+	JiraAPIToken   string `env:"KSCRIBE_JIRA_API_TOKEN"   envDefault:""`
+	JiraProjectKey string `env:"KSCRIBE_JIRA_PROJECT_KEY" envDefault:""`
+
+	// LinearAPIKey and LinearTeamID enable Linear ticket creation when both
+	// are set. LinearAPIKey is a credential — SEC-001: never logged.
+	LinearAPIKey string `env:"KSCRIBE_LINEAR_API_KEY" envDefault:""`
+	LinearTeamID string `env:"KSCRIBE_LINEAR_TEAM_ID" envDefault:""`
+
 	// ResyncPeriod is how often the controller re-syncs watched resources.
 	ResyncPeriod time.Duration `env:"KSCRIBE_RESYNC_PERIOD" envDefault:"10m"`
 }

@@ -4,13 +4,13 @@ version: 1.0
 date_created: 2026-07-06
 last_updated: 2026-07-06
 owner: kscribe
-status: 'In progress'
+status: 'Completed'
 tags: [feature]
 ---
 
 # Ticket Notifications (Jira / Linear)
 
-![Status: In Progress](https://img.shields.io/badge/status-In%20Progress-yellow)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 Adds two new `notify.Notifier` implementations — Jira Cloud and Linear — so a
 finished `KscribeDiagnosis` can open a ticket, exactly like the existing
@@ -32,11 +32,12 @@ Slack/Resend notifiers. Both are optional and independently enabled by config.
 
 **Goal**: Add both ticket-creation notifiers, config, wiring, and tests in one pass — they share the same interface, config file, and wiring point, so splitting them would just be churn.
 
-- [ ] TASK-001: Add `internal/notify/jira.go`: `Jira` struct `{BaseURL, Email, APIToken, ProjectKey string; HTTPClient *http.Client}`. `Notify` builds an issue summary/description from `Notification` (reuse the `[kscribe] Phase: Reason ns/obj` convention from `Slack.Notify`/`Subject`), POSTs `{"fields":{"project":{"key":ProjectKey},"summary":...,"description":{"type":"doc","version":1,"content":[...]},"issuetype":{"name":"Task"}}}` to `BaseURL+"/rest/api/3/issue"` with `req.SetBasicAuth(Email, APIToken)`. Default 10s-timeout `http.Client` if nil. Non-2xx → error with status + body capped at 512 bytes, same pattern as `resend.go`/`slack.go`.
-- [ ] TASK-002: Add `internal/notify/linear.go`: `Linear` struct `{APIKey, TeamID string; HTTPClient *http.Client}`. `Notify` POSTs a GraphQL `issueCreate` mutation (`{"query": "...", "variables": {"input": {"teamId": TeamID, "title": ..., "description": ...}}}`) to `https://api.linear.app/graphql` with header `Authorization: <APIKey>` (raw key, Linear does not use `Bearer`). Same default-client and error-truncation pattern. Treat a GraphQL response body containing `"errors"` as a failure too (GraphQL returns 200 on partial errors).
-- [ ] TASK-003: In `internal/config/config.go`, add fields after `SlackWebhookURL`: `JiraBaseURL`, `JiraEmail`, `JiraAPIToken` (SEC-001 comment), `JiraProjectKey`, `LinearAPIKey` (SEC-001 comment), `LinearTeamID` — all `envDefault:""`.
-- [ ] TASK-004: In `cmd/kscribe/main.go`, after the Slack block (~line 229), add: if `cfg.JiraBaseURL != "" && cfg.JiraProjectKey != ""` append `&notify.Jira{...}` and `"jira"` to channels; if `cfg.LinearAPIKey != "" && cfg.LinearTeamID != ""` append `&notify.Linear{...}` and `"linear"` to channels.
-- [ ] TASK-005: Add `internal/notify/jira_test.go` and `internal/notify/linear_test.go` following `resend_test.go` conventions: `httptest.NewServer` capturing the request, assert auth header/basic-auth, assert body fields, assert error-status handling with truncation, assert GraphQL-errors-in-200 handling for Linear.
+- [x] TASK-001: Add `internal/notify/jira.go`: `Jira` struct `{BaseURL, Email, APIToken, ProjectKey string; HTTPClient *http.Client}`. `Notify` builds an issue summary/description from `Notification` (reuse the `[kscribe] Phase: Reason ns/obj` convention from `Slack.Notify`/`Subject`), POSTs `{"fields":{"project":{"key":ProjectKey},"summary":...,"description":{"type":"doc","version":1,"content":[...]},"issuetype":{"name":"Task"}}}` to `BaseURL+"/rest/api/3/issue"` with `req.SetBasicAuth(Email, APIToken)`. Default 10s-timeout `http.Client` if nil. Non-2xx → error with status + body capped at 512 bytes, same pattern as `resend.go`/`slack.go`.
+- [x] TASK-002: Add `internal/notify/linear.go`: `Linear` struct `{APIKey, TeamID string; HTTPClient *http.Client}`. `Notify` POSTs a GraphQL `issueCreate` mutation (`{"query": "...", "variables": {"input": {"teamId": TeamID, "title": ..., "description": ...}}}`) to `https://api.linear.app/graphql` with header `Authorization: <APIKey>` (raw key, Linear does not use `Bearer`). Same default-client and error-truncation pattern. Treat a GraphQL response body containing `"errors"` as a failure too (GraphQL returns 200 on partial errors).
+  > Deviation: added an optional `BaseURL` field (defaults to the Linear API URL) mirroring `Resend.BaseURL`, so tests can point at an `httptest` server instead of a custom RoundTripper. Same pattern already used by `resend.go`.
+- [x] TASK-003: In `internal/config/config.go`, add fields after `SlackWebhookURL`: `JiraBaseURL`, `JiraEmail`, `JiraAPIToken` (SEC-001 comment), `JiraProjectKey`, `LinearAPIKey` (SEC-001 comment), `LinearTeamID` — all `envDefault:""`.
+- [x] TASK-004: In `cmd/kscribe/main.go`, after the Slack block (~line 229), add: if `cfg.JiraBaseURL != "" && cfg.JiraProjectKey != ""` append `&notify.Jira{...}` and `"jira"` to channels; if `cfg.LinearAPIKey != "" && cfg.LinearTeamID != ""` append `&notify.Linear{...}` and `"linear"` to channels.
+- [x] TASK-005: Add `internal/notify/jira_test.go` and `internal/notify/linear_test.go` following `resend_test.go` conventions: `httptest.NewServer` capturing the request, assert auth header/basic-auth, assert body fields, assert error-status handling with truncation, assert GraphQL-errors-in-200 handling for Linear.
 
 **Completion criteria**: `go build ./... && go test ./internal/notify/... ./internal/config/... ./cmd/...` pass.
 
@@ -78,9 +79,9 @@ Do NOT push, open PRs, or modify PLAN.md.
 
 ## 3. Testing
 
-- [ ] TEST-001: `internal/notify/jira_test.go` — success POST, basic-auth header, error truncation.
-- [ ] TEST-002: `internal/notify/linear_test.go` — success POST, `Authorization` header (no Bearer), HTTP-200-with-GraphQL-errors treated as failure, error truncation.
-- [ ] TEST-003: `go build ./...` and `go vet ./...` clean.
+- [x] TEST-001: `internal/notify/jira_test.go` — success POST, basic-auth header, error truncation.
+- [x] TEST-002: `internal/notify/linear_test.go` — success POST, `Authorization` header (no Bearer), HTTP-200-with-GraphQL-errors treated as failure, error truncation.
+- [x] TEST-003: `go build ./...` and `go vet ./...` clean.
 
 ## 4. Risks & Assumptions
 

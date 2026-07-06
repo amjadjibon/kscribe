@@ -227,6 +227,22 @@ diagnoses failures using an LLM backend, and surfaces remediation guidance.`,
 				notifiers = append(notifiers, &notify.Slack{WebhookURL: cfg.SlackWebhookURL})
 				channels = append(channels, "slack")
 			}
+			if cfg.JiraBaseURL != "" && cfg.JiraProjectKey != "" {
+				notifiers = append(notifiers, &notify.Jira{
+					BaseURL:    cfg.JiraBaseURL,
+					Email:      cfg.JiraEmail,
+					APIToken:   cfg.JiraAPIToken,
+					ProjectKey: cfg.JiraProjectKey,
+				})
+				channels = append(channels, "jira")
+			}
+			if cfg.LinearAPIKey != "" && cfg.LinearTeamID != "" {
+				notifiers = append(notifiers, &notify.Linear{
+					APIKey: cfg.LinearAPIKey,
+					TeamID: cfg.LinearTeamID,
+				})
+				channels = append(channels, "linear")
+			}
 			switch len(notifiers) {
 			case 0:
 			case 1:
