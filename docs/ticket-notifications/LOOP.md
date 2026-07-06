@@ -8,7 +8,7 @@ max_phases: 5
 max_agents: 3
 current_iteration: 1
 status: running
-last_review_base: ''
+last_review_base: '8cbbfb475fadf63f4e31f2438d0c6718f268ea65'
 ---
 
 # Dev Loop: ticket-notifications
@@ -33,7 +33,7 @@ last_review_base: ''
 ## Log
 
 ### Iteration 1
-- [ ] implement-plan
-- [ ] qa
+- [x] implement-plan
+- [x] qa
 - [ ] code-review
 - [ ] decide
