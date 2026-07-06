@@ -6,9 +6,9 @@ started: 2026-07-06
 max_iterations: 3
 max_phases: 5
 max_agents: 3
-current_iteration: 1
+current_iteration: 2
 status: running
-last_review_base: '8cbbfb475fadf63f4e31f2438d0c6718f268ea65'
+last_review_base: '57293e9'
 ---
 
 # Dev Loop: ticket-notifications
@@ -17,7 +17,7 @@ last_review_base: '8cbbfb475fadf63f4e31f2438d0c6718f268ea65'
 
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
-| 1    | —       | —    | —    | —   | —   | —    | —      |
+| 1    | Request Changes | 0 | 0 | 1 | 0 | sequential | direct fix |
 
 ## Stacked PRs
 
@@ -35,5 +35,10 @@ last_review_base: '8cbbfb475fadf63f4e31f2438d0c6718f268ea65'
 ### Iteration 1
 - [x] implement-plan
 - [x] qa
+- [x] code-review
+- [x] decide
+
+### Iteration 2
+- [ ] fix only — no re-implement
 - [ ] code-review
 - [ ] decide
