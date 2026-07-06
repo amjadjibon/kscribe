@@ -56,6 +56,27 @@ func TestLinearNotifyGraphQLErrorsIn200(t *testing.T) {
 	}
 }
 
+func TestLinearNotifyGraphQLErrorsOver512Bytes(t *testing.T) {
+	// A validation error that echoes back a long input can push the error
+	// envelope past the 512-byte cap used for the truncated message; the
+	// parser must still see it as a failure (regression for MED-001).
+	long := strings.Repeat("x", 700)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		body, _ := json.Marshal(map[string]any{
+			"errors": []map[string]string{{"message": "invalid input: " + long}},
+		})
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	l := &Linear{APIKey: "k", TeamID: "bad", BaseURL: srv.URL}
+	err := l.Notify(context.Background(), Notification{})
+	if err == nil || !strings.Contains(err.Error(), "linear graphql error") {
+		t.Fatalf("err = %v, want graphql error surfaced despite long payload", err)
+	}
+}
+
 func TestLinearNotifyErrorTruncated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

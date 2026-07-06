@@ -83,15 +83,21 @@ func (l *Linear) Notify(ctx context.Context, n Notification) error {
 	}
 	defer resp.Body.Close()
 
-	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	// Read enough to parse a GraphQL error envelope even when it echoes back
+	// input (validation errors); truncate only the message shown to the operator.
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	truncated := rb
+	if len(truncated) > 512 {
+		truncated = truncated[:512]
+	}
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("linear error %d: %s", resp.StatusCode, rb)
+		return fmt.Errorf("linear error %d: %s", resp.StatusCode, truncated)
 	}
 
 	// GraphQL returns 200 even when the mutation fails, so check the body.
 	var lr linearResponse
 	if err := json.Unmarshal(rb, &lr); err == nil && len(lr.Errors) > 0 {
-		return fmt.Errorf("linear graphql error: %s", rb)
+		return fmt.Errorf("linear graphql error: %s", truncated)
 	}
 	return nil
 }
