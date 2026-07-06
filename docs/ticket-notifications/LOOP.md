@@ -18,6 +18,7 @@ last_review_base: '57293e9'
 | Iter | Verdict | Crit | High | Med | Low | Mode | Action |
 |------|---------|------|------|-----|-----|------|--------|
 | 1    | Request Changes | 0 | 0 | 1 | 0 | sequential | direct fix |
+| 2    | Approve | 0 | 0 | 0 | 0 | sequential | clean exit |
 
 ## Stacked PRs
 
@@ -39,6 +40,6 @@ last_review_base: '57293e9'
 - [x] decide
 
 ### Iteration 2
-- [ ] fix only — no re-implement
-- [ ] code-review
-- [ ] decide
+- [x] fix only — no re-implement
+- [x] code-review
+- [x] decide
