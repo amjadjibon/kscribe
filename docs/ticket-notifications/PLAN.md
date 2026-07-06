@@ -4,13 +4,13 @@ version: 1.0
 date_created: 2026-07-06
 last_updated: 2026-07-06
 owner: kscribe
-status: 'Planned'
+status: 'In progress'
 tags: [feature]
 ---
 
 # Ticket Notifications (Jira / Linear)
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: In Progress](https://img.shields.io/badge/status-In%20Progress-yellow)
 
 Adds two new `notify.Notifier` implementations — Jira Cloud and Linear — so a
 finished `KscribeDiagnosis` can open a ticket, exactly like the existing
